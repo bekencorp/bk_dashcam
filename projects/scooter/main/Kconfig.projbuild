@@ -1,0 +1,17 @@
+menu "Headset Example Configuration"
+
+    config A2DP_SINK_DEMO
+        bool "a2dp sink demo"
+        depends on BT
+        default y
+
+    config HFP_HF_DEMO
+        bool "hfp hf demo"
+        depends on BT
+        default n
+
+    config LV_USE_DEMO_METER
+        bool "LVGL Meter"
+        depends on LVGL
+        default n
+endmenu
