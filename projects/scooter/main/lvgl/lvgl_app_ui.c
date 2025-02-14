@@ -4,16 +4,20 @@
 #if (CONFIG_TP)
 #include "driver/drv_tp.h"
 #endif
+#include "frame_buffer.h"
 #include "yuv_encode.h"
 #include "lv_vendor.h"
-#include "lvgl.h"
 
+extern uint8_t lvgl_video_switch;
 
 extern void lv_example_meter(void);
+extern void lv_example_meter_exit(void);
 
 void lvgl_event_open_handle(media_mailbox_msg_t *msg)
 {
     os_printf("[%s] lvgl open start\r\n", __func__);
+
+    lvgl_video_switch = 1;
 
     lv_vnd_config_t lv_vnd_config = {0};
     lcd_open_t *lcd_open = (lcd_open_t *)msg->param;
@@ -49,13 +53,18 @@ void lvgl_event_open_handle(media_mailbox_msg_t *msg)
 
 void lvgl_event_close_handle(media_mailbox_msg_t *msg)
 {
-    lcd_display_close();
+//    lcd_display_close();
 
 #if (CONFIG_TP)
     drv_tp_close();
 #endif
 
+    lv_example_meter_exit();
+
     lv_vendor_stop();
+
+    lvgl_video_switch = 0;
+
     lv_vendor_deinit();
 }
 

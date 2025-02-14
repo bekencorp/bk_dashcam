@@ -14,4 +14,23 @@ menu "Headset Example Configuration"
         bool "LVGL Meter"
         depends on LVGL
         default n
+
+    config MEDIA_RECEIVE_DEMO
+        bool "media receive other device data"
+        depends on MEDIA
+        default n
+
+    config MEDIA_DEMO_MODE_TCP
+        bool "MEDIA RECEIVE DEMO USE TCP MODE"
+        depends on MEDIA_RECEIVE_DEMO
+        default n
+
+    config SUPPORTED_IMAGE_MAX_720P_ONLY_H264
+		bool "Supported image max 720P and only use H264 mode"
+        default n
+
+ 	config SMALL_JPEG_FRAME_SIZE
+		int "config a jpeg frame size unit(byte), range 0-200k, default 150k"
+		range 0 102400
+		default 51200
 endmenu

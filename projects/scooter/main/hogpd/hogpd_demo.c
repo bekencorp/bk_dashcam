@@ -88,7 +88,7 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_hidd[] =
         BK_GATT_CHAR_DECL(BK_GATT_UUID_HID_REPORT_MAP,
                           sizeof(s_hid_rprtmap), (uint8_t *)s_hid_rprtmap,
                           BK_GATT_CHAR_PROP_BIT_READ,
-                          BK_GATT_PERM_READ,
+                          BK_GATT_PERM_READ_ENCRYPTED,
                           //BK_GATT_PERM_READ_ENCRYPTED | BK_GATT_PERM_WRITE_ENCRYPTED,
                           BK_GATT_AUTO_RSP),
     },
@@ -459,6 +459,8 @@ int32_t hogpd_demo_init(void)
     s_hogpd_is_init = 1;
 
     hogpd_demo_reg_db();
+
+    hogpd_logi("done");
 #else
     hogpd_loge("hogpd not enable");
 #endif

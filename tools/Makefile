@@ -66,6 +66,9 @@ help:
 	@echo " make clean - clean build"
 	@echo " make help - display this help info"
 	@echo " make doc - generate avdk doc"
+	@echo " 	example:"
+	@echo " 		make doc DOCS_TARGET="bk7258" DOCS_TYPE="html" DOCS_VERSION="latest""
+	@echo " 		make doc DOCS_TARGET="bk7258" DOCS_TYPE="pdf"  DOCS_VERSION="latest""
 	@echo ""
 
 common:
@@ -82,12 +85,23 @@ menuconfig $(soc_targets): common
 	@make $(CMD_TARGET) PROJECT_DIR=$(PROJECT_DIR) BUILD_DIR=$(PROJECT_BUILD_DIR) APP_NAME=$(APP_NAME) APP_VERSION=$(APP_VERSION) -C $(ARMINO_AVDK_DIR)
 
 
+DOCS_PARAMTERS:=
+ifneq ("$(DOCS_TARGET)", "")
+	DOCS_PARAMTERS += --target $(DOCS_TARGET)
+endif
+ifneq ("$(DOCS_TYPE)", "")
+	DOCS_PARAMTERS += --type $(DOCS_TYPE)
+endif
+ifneq ("$(DOCS_VERSION)", "")
+	DOCS_PARAMTERS += --version $(DOCS_VERSION)
+endif
 
 doc:
-	#@python3 ./tools/armino_doc.py
+	@python3 ./tools/armino_doc.py $(DOCS_PARAMTERS)
 
 clean:
 	@echo "rm -rf ./build"
+	@python3 ./tools/armino_doc.py --clean True
 	@rm -rf ./build  $(ARMINO_AVDK_DIR)/build   $(ARMINO_IDK_DIR)/build
 
 

@@ -33,7 +33,7 @@
 #include "dm_gap_utils.h"
 
 #define DYNAMIC_ADD_ATTR 0
-
+#define SET_ADVTYPE_TO_IDENTITY_WHEN_NORPA 0
 
 #define INVALID_ATTR_HANDLE 0
 #define ADV_HANDLE 0
@@ -60,7 +60,7 @@ typedef struct
 
 typedef struct
 {
-    dm_gatts_db_reg_t reg[1];
+    dm_gatts_db_reg_t reg[2];
     uint32_t count;
 } dm_gatts_db_ctx_t;
 
@@ -157,11 +157,14 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_1[] =
     },
 };
 
+//static const uint8_t s_gatts_128_attr[] = {0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x34, 0x22, 0x00, 0x00};
+
 static const bk_gatts_attr_db_t s_gatts_attr_db_service_2[] =
 {
     //service
     {
         BK_GATT_PRIMARY_SERVICE_DECL(0x2234),
+        //BK_GATT_PRIMARY_SERVICE_DECL_128(s_gatts_128_attr),
     },
 
     //char 1
@@ -318,6 +321,8 @@ static int32_t dm_ble_gap_cb(bk_ble_gap_cb_event_t event, bk_ble_gap_cb_param_t 
             gatt_loge("set adv enable err %d", pm->status);
         }
 
+        gatt_logw("pls disable adv before remove pair !!!");
+
         if (s_ble_sema != NULL)
         {
             rtos_set_semaphore( &s_ble_sema );
@@ -458,6 +463,12 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
             {
                 *s_attr_handle_list[i] = param->handles[i];
 
+                bk_ble_gatts_char_property_operation(BK_GATTS_CHAR_PROPERTY_BIT_MASK_OP_GET, param->handles[i], NULL);
+
+                //                uint16_t tmp_property = BK_GATT_CHAR_PROP_BIT_READ;
+                //                bk_ble_gatts_char_property_operation(BK_GATTS_CHAR_PROPERTY_BIT_MASK_OP_SET, param->handles[i], &tmp_property);
+                //                bk_ble_gatts_char_property_operation(BK_GATTS_CHAR_PROPERTY_BIT_MASK_OP_GET, param->handles[i], NULL);
+
                 if (i) //service handle cant get buff
                 {
                     uint16_t tmp_len = 0;
@@ -532,6 +543,8 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
                 gatt_loge("cant found wait completed !!!");
                 break;
             }
+
+            gatt_logi("reg attr handle %d~%d", param->handles[0], param->handles[param->num_handle - 1]);
 
             for (int i = 0; i < param->num_handle; ++i)
             {
@@ -1121,47 +1134,9 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
 
 #endif
 #if 0
-        bk_bd_addr_t nominal_addr = {0};
-        uint8_t nominal_addr_type = 0;
-        bk_bd_addr_t identity_addr = {0};
-        uint8_t identity_addr_type = 0;
-
-        if (1 && 0 == dm_gatt_get_authen_status(nominal_addr, &nominal_addr_type, identity_addr, &identity_addr_type))
-        {
-            // for bonded adv
-            bk_ble_gap_ext_adv_params_t adv_param =
-            {
-                .type = BK_BLE_GAP_SET_EXT_ADV_PROP_LEGACY_IND,
-                .interval_min = 120,
-                .interval_max = 160,
-                .channel_map = BK_ADV_CHNL_ALL,
-                .own_addr_type = BLE_ADDR_TYPE_RPA_RANDOM,
-                .peer_addr_type = identity_addr_type,
-                .filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-                .primary_phy = BK_BLE_GAP_PRI_PHY_1M,
-                .secondary_phy = BK_BLE_GAP_PHY_1M,
-                .sid = 0,
-                .scan_req_notif = 0,
-            };
-
-            adv_param.peer_addr_type = identity_addr_type;
-            os_memcpy(adv_param.peer_addr, identity_addr, sizeof(identity_addr));
-
-            ret = bk_ble_gap_set_adv_params(0, &adv_param);
-
-            if (ret)
-            {
-                gatt_loge("bk_ble_gap_set_adv_params err %d", ret);
-                break;
-            }
-
-            rtos_delay_milliseconds(100);
-        }
-
-#else
         dm_gatts_set_adv_param(s_dm_gatts_local_addr_is_public);
         rtos_delay_milliseconds(100);
-#endif
+
         const bk_ble_gap_ext_adv_t ext_adv =
         {
             .instance = 0,
@@ -1177,6 +1152,7 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
         }
 
         rtos_delay_milliseconds(100);
+#endif
     }
     break;
 
@@ -1277,10 +1253,20 @@ static int32_t dm_gatts_set_adv_param(uint8_t local_addr_is_public)
 
         adv_param.peer_addr_type = nominal_addr_type;
         os_memcpy(adv_param.peer_addr, nominal_addr, sizeof(nominal_addr));
+
+        gatt_logw("set adv param rpa because pair, addr type 0x%x", adv_param.own_addr_type);
     }
+#if SET_ADVTYPE_TO_IDENTITY_WHEN_NORPA
+    else if (!g_dm_gap_use_rpa && !local_addr_is_public && 0 == dm_gatt_get_authen_status(nominal_addr, &nominal_addr_type, identity_addr, &identity_addr_type))
+    {
+        adv_param.own_addr_type = identity_addr_type;
+        gatt_logw("set adv param no rpa because pair, addr type 0x%x", adv_param.own_addr_type);
+    }
+#endif
     else
     {
         adv_param.own_addr_type = (local_addr_is_public ? BLE_ADDR_TYPE_PUBLIC : BLE_ADDR_TYPE_RANDOM);
+        gatt_logw("set adv param other, addr type 0x%x", adv_param.own_addr_type);
     }
 
     ret = bk_ble_gap_set_adv_params(ADV_HANDLE, &adv_param);
@@ -1514,6 +1500,7 @@ int dm_gatts_main(cli_gatt_param_t *param)
         if (param->p_pa)
         {
             s_dm_gatts_local_addr_is_public = *param->p_pa;
+            gatt_loge("set gatts addr is public %d", s_dm_gatts_local_addr_is_public);
         }
     }
 
@@ -1889,12 +1876,30 @@ int dm_gatts_main(cli_gatt_param_t *param)
     }
 
     uint8_t need_set_random_addr = 0;
+    uint8_t identity_addr_type = 0;
 
     if (g_dm_gap_use_rpa && dm_ble_gap_get_rpa(current_addr) == 0)
     {
         gatt_logw("set adv random addr with generate rpa");
         need_set_random_addr = 1;
     }
+#if SET_ADVTYPE_TO_IDENTITY_WHEN_NORPA
+    else if (!g_dm_gap_use_rpa && !s_dm_gatts_local_addr_is_public && 0 == dm_gatt_get_authen_status(NULL, NULL, NULL, &identity_addr_type))
+    {
+        if(identity_addr_type == BLE_ADDR_TYPE_RANDOM)
+        {
+            gatt_logw("set adv random addr with identity addr because no rpa pair exist, type %d", identity_addr_type);
+
+            need_set_random_addr = 1;
+            os_memcpy(current_addr, identity_addr, sizeof(identity_addr));
+        }
+        else
+        {
+            //walkaround controller bug that random addr will take effect once bk_ble_gap_set_adv_rand_addr set
+            gatt_logw("no need set adv random addr because no rpa pair exist, type %d", identity_addr_type);
+        }
+    }
+#endif
     else if (!s_dm_gatts_local_addr_is_public)
     {
         gatt_logw("set adv random addr with user define");
@@ -1904,6 +1909,10 @@ int dm_gatts_main(cli_gatt_param_t *param)
         //current_addr[5] = 0x0;
 
         need_set_random_addr = 1;
+    }
+    else
+    {
+        gatt_logw("no need set random addr");
     }
 
     if (need_set_random_addr)
@@ -1925,7 +1934,9 @@ int dm_gatts_main(cli_gatt_param_t *param)
         }
     }
 
-    const uint8_t adv_uuid[16] =
+#if 1
+    //use hid service
+    const uint8_t hogp_service_uuid[16] =
     {
         0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
         0x00, 0x10, 0x00, 0x00,
@@ -1938,15 +1949,32 @@ int dm_gatts_main(cli_gatt_param_t *param)
         .include_name = 1,
         .min_interval = 0x0006,
         .max_interval = 0x0010,
-        .appearance = 0xc103,
+        .appearance = 0x8001,//0xc103,
         .manufacturer_len = 0,
         .p_manufacturer_data = NULL,
         .service_data_len = 0,
         .p_service_data = NULL,
-        .service_uuid_len = sizeof(adv_uuid),
-        .p_service_uuid = (void *)adv_uuid,
+        .service_uuid_len = sizeof(hogp_service_uuid),
+        .p_service_uuid = (void *)hogp_service_uuid,
+        .flag = 2,//0x06,
+    };
+#else
+    bk_ble_adv_data_t adv_data =
+    {
+        .set_scan_rsp = 0,
+        .include_name = 1,
+        .min_interval = 0x0006,
+        .max_interval = 0x0010,
+        .appearance = 0,
+        .manufacturer_len = 0,
+        .p_manufacturer_data = NULL,
+        .service_data_len = 0,
+        .p_service_data = NULL,
+        .service_uuid_len = 0,
+        .p_service_uuid = NULL,
         .flag = 0x06,
     };
+#endif
 
     ret = bk_ble_gap_set_adv_data((bk_ble_adv_data_t *)&adv_data);
 

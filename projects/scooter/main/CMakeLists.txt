@@ -46,6 +46,8 @@ if(CONFIG_BLE)
         gatt/dm_gap_utils.c
         hogpd/hogpd_demo.c
         hogpd/hogpd_demo_cli.c
+        wifi_boarding/wifi_boarding_demo.c
+        wifi_boarding/wifi_boarding_demo_cli.c
     )
 endif()
 
@@ -93,10 +95,27 @@ endif()
 
 endif()
 
+if (CONFIG_MEDIA_RECEIVE_DEMO)
+    list(APPEND incs
+        media/include
+    )
+if (CONFIG_MEDIA_APP)
+    list(APPEND srcs
+        media/src/media_comm.c
+        media/src/media_transmission.c
+        media/src/media_udp_service.c
+        media/src/media_tcp_service.c
+        media/src/media_devices.c
+        media/src/test_jpeg.c
+    )
+endif()#CONFIG_MEDIA_APP
+
+endif()#CONFIG_MEDIA_RECEIVE_DEMO
+
 armino_component_register(
-	SRCS "${srcs}"
-	INCLUDE_DIRS "${incs}"
-	PRIV_REQUIRES bk_init bk_cli media_service aud_intf multimedia raw_stream audio_pipeline onboard_speaker_stream onboard_mic_stream aac_decoder lvgl
+    SRCS "${srcs}"
+    INCLUDE_DIRS "${incs}"
+	PRIV_REQUIRES bk_init bk_cli media_service aud_intf multimedia aac_decoder lvgl wifi_transfer lwip_intf_v2_1 avdk_utils audio_play audio_record mp3_play
 )
 
 get_filename_component(config_component_name ${CMAKE_CURRENT_LIST_DIR} NAME)

@@ -288,6 +288,12 @@ void gap_event_cb(bk_gap_bt_cb_event_t event, bk_bt_gap_cb_param_t *param)
                   param->link_key_notif.bda[1],
                   param->link_key_notif.bda[0]);
 
+        uint8_t log_buff[16 * 2 + 10] = {0};
+        for (int i = 0; i < sizeof(param->link_key_notif.link_key); ++i)
+        {
+            sprintf((char *)(log_buff + i * 2), "%02X", param->link_key_notif.link_key[i]);
+        }
+        LOGW("%s %s\n", __func__, log_buff);
         int ret = bluetooth_storage_save_linkkey_info(param->link_key_notif.bda, param->link_key_notif.link_key);
         // s_a2dp_vol = DEFAULT_A2DP_VOLUME;
         // bluetooth_storage_save_volume(param->link_key_notif.bda, s_a2dp_vol);
@@ -339,6 +345,12 @@ void gap_event_cb(bk_gap_bt_cb_event_t event, bk_bt_gap_cb_param_t *param)
                       addr[2],
                       addr[1],
                       addr[0]);
+            uint8_t log_buff[16 * 2 + 10] = {0};
+            for (int i = 0; i < sizeof(tmp.link_key); ++i)
+            {
+                sprintf((char *)(log_buff + i * 2), "%02X", tmp.link_key[i]);
+            }
+            LOGW("%s %s\n", __func__, log_buff);
 
             found_key = 1;
         }

@@ -397,7 +397,7 @@ static void cmd_ble_gatt_demo(char *pcWriteBuffer, int xWriteBufferLen, int argc
                 goto __usage;
             }
 
-            dm_gatts_enable_adv(enable);
+            ret = dm_gatts_enable_adv(enable);
         }
         else
         {
@@ -703,6 +703,10 @@ static void cmd_ble_gatt_demo(char *pcWriteBuffer, int xWriteBufferLen, int argc
         }
 
         ret = dm_ble_gap_update_param(mac_final, interval, tout);
+    }
+    else if (os_strcmp(argv[1], "test") == 0)
+    {
+
     }
     else
     {

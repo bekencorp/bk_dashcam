@@ -4,8 +4,6 @@ cmake_minimum_required(VERSION 3.5)
 
 set(EXTRA_COMPONENTS_DIRS 
     $ENV{ARMINO_PATH}/../components
-    $ENV{ARMINO_PATH}/../components/bk_audio
-    $ENV{ARMINO_PATH}/../components/bk_audio/audio_streams
     $ENV{ARMINO_PATH}/../components/codec/
     $ENV{ARMINO_PATH}/../components/codec/legacy 
     $ENV{ARMINO_PATH}/../components/codec/legacy/media/audio
@@ -13,6 +11,10 @@ set(EXTRA_COMPONENTS_DIRS
     $ENV{ARMINO_PATH}/../components/bk_thirdparty/asr
     $ENV{ARMINO_PATH}/../components/bk_thirdparty
     $ENV{ARMINO_PATH}/../components/bk_bt
+	$ENV{ARMINO_PATH}/../components/audio_play
+	$ENV{ARMINO_PATH}/../components/audio_record
+	$ENV{ARMINO_PATH}/../components/mp3_play
+	$ENV{ARMINO_PATH}/../components/avdk_utils
     $ENV{ARMINO_PATH}/../properties/modules 
     $ENV{ARMINO_PATH}/../properties/modules/video_codec
     $ENV{ARMINO_PATH}/../properties/modules/audio_codec
