@@ -23,16 +23,9 @@ void lvgl_event_open_handle(media_mailbox_msg_t *msg)
     lcd_open_t *lcd_open = (lcd_open_t *)msg->param;
 
 #ifdef CONFIG_LVGL_USE_PSRAM
-#if 0
-#define PSRAM_DRAW_BUFFER ((0x60000000UL) + 5 * 1024 * 1024)
     lv_vnd_config.draw_pixel_size = ppi_to_pixel_x(lcd_open->device_ppi) * ppi_to_pixel_y(lcd_open->device_ppi);
-    lv_vnd_config.draw_buf_2_1 = (lv_color_t *)PSRAM_DRAW_BUFFER;
-    lv_vnd_config.draw_buf_2_2 = (lv_color_t *)(PSRAM_DRAW_BUFFER + lv_vnd_config.draw_pixel_size * sizeof(lv_color_t));
-#else
-    lv_vnd_config.draw_pixel_size = ppi_to_pixel_x(lcd_open->device_ppi) * ppi_to_pixel_y(lcd_open->device_ppi);
-    lv_vnd_config.draw_buf_2_1 = (lv_color_t *)frame_buffer_display_malloc(lv_vnd_config.draw_pixel_size * sizeof(lv_color_t));
-    lv_vnd_config.draw_buf_2_2 = (lv_color_t *)frame_buffer_display_malloc(lv_vnd_config.draw_pixel_size * sizeof(lv_color_t));
-#endif
+    lv_vnd_config.draw_buf_2_1 = (lv_color_t *)psram_malloc(lv_vnd_config.draw_pixel_size * sizeof(lv_color_t));
+    lv_vnd_config.draw_buf_2_2 = (lv_color_t *)psram_malloc(lv_vnd_config.draw_pixel_size * sizeof(lv_color_t));
 #else
 #define PSRAM_FRAME_BUFFER ((0x60000000UL) + 5 * 1024 * 1024)
     lv_vnd_config.draw_pixel_size = ppi_to_pixel_x(lcd_open->device_ppi) * ppi_to_pixel_y(lcd_open->device_ppi) / 10;
@@ -75,12 +68,13 @@ void lvgl_event_close_handle(media_mailbox_msg_t *msg)
 #ifdef CONFIG_LVGL_USE_PSRAM
     if (lv_vnd_config.draw_buf_2_1)
     {
-        frame_buffer_display_free((frame_buffer_t *)lv_vnd_config.draw_buf_2_1);
+        psram_free(lv_vnd_config.draw_buf_2_1);
         lv_vnd_config.draw_buf_2_1 = NULL;
     }
+
     if (lv_vnd_config.draw_buf_2_2)
     {
-        frame_buffer_display_free((frame_buffer_t *)lv_vnd_config.draw_buf_2_2);
+        psram_free(lv_vnd_config.draw_buf_2_2);
         lv_vnd_config.draw_buf_2_2 = NULL;
     }
 #endif
