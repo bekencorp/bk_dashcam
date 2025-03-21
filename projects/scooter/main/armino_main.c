@@ -38,6 +38,11 @@ typedef struct {
 test_thread_t *s_app_test = NULL;
 beken_thread_t media_demo_thread;
 
+#define DEFAULT_WIFI_SSID "bicycle"
+#define DEFAULT_WIFI_KEY "12345678"
+static char wifi_ssid[50] = DEFAULT_WIFI_SSID;
+static char wifi_key[50] = DEFAULT_WIFI_KEY;
+
 
 const lcd_open_t lcd_open =
 {
@@ -62,8 +67,8 @@ void lvgl_app_init(void)
 void media_receive_sta_demo_init(void)
 {
     os_printf("+++start connect\n");
-    demo_sta_app_init("bicycle", "12345678");
-    os_printf("---connect ssid:bicycle, key:12345678\n");
+    demo_sta_app_init(wifi_ssid, wifi_key);
+    os_printf("---connect ssid:%s, key:%s\n", wifi_ssid, wifi_key);
 
 #if CONFIG_MEDIA_DEMO_MODE_TCP
     av_server_tcp_service_init((void *)&lcd_open, ROTATE_NONE);
@@ -74,8 +79,8 @@ void media_receive_sta_demo_init(void)
 
 void media_receive_softap_demo_init(void)
 {
-    os_printf("---create ssid:bicycle, key:12345678\n");
-    demo_softap_app_init("bicycle", "12345678", "13");
+    os_printf("---create ssid:%s, key:%s\n", wifi_ssid, wifi_key);
+    demo_softap_app_init(wifi_ssid, wifi_key, "13");
     os_printf("---connected\n");
 
 #if CONFIG_MEDIA_DEMO_MODE_TCP
@@ -134,6 +139,42 @@ void cli_test_cmd(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **arg
 
     if (os_strcmp(argv[1], "sta") == 0)
     {
+        if (argc >= 3)
+        {
+            int wifi_ssid_len = os_strlen(argv[2]);
+            if (wifi_ssid_len > 0)
+            {
+                if (wifi_ssid_len >= 50)
+                {
+                    wifi_ssid_len = 49;
+                }
+                os_memcpy(wifi_ssid, argv[2], wifi_ssid_len);
+                wifi_ssid[wifi_ssid_len] = '\0';
+            }
+        }
+        else
+        {
+            os_memcpy(wifi_ssid, DEFAULT_WIFI_SSID, os_strlen(DEFAULT_WIFI_SSID));
+            wifi_ssid[os_strlen(DEFAULT_WIFI_SSID)] = '\0';
+        }
+        if (argc >= 4)
+        {
+            int wifi_key_len = os_strlen(argv[3]);
+            if (wifi_key_len > 0)
+            {
+                if (wifi_key_len >= 50)
+                {
+                    wifi_key_len = 49;
+                }
+                os_memcpy(wifi_key, argv[3], wifi_key_len);
+                wifi_key[wifi_key_len] = '\0';
+            }
+        }
+        else
+        {
+            os_memcpy(wifi_key, DEFAULT_WIFI_KEY, os_strlen(DEFAULT_WIFI_KEY));
+            wifi_key[os_strlen(DEFAULT_WIFI_KEY)] = '\0';
+        }
         if (media_demo_thread == NULL)
         {
             rtos_create_thread(&media_demo_thread,
@@ -150,6 +191,42 @@ void cli_test_cmd(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **arg
     }
     if (os_strcmp(argv[1], "ap") == 0)
     {
+        if (argc >= 3)
+        {
+            int wifi_ssid_len = os_strlen(argv[2]);
+            if (wifi_ssid_len > 0)
+            {
+                if (wifi_ssid_len >= 50)
+                {
+                    wifi_ssid_len = 49;
+                }
+                os_memcpy(wifi_ssid, argv[2], wifi_ssid_len);
+                wifi_ssid[wifi_ssid_len] = '\0';
+            }
+        }
+        else
+        {
+            os_memcpy(wifi_ssid, DEFAULT_WIFI_SSID, os_strlen(DEFAULT_WIFI_SSID));
+            wifi_ssid[os_strlen(DEFAULT_WIFI_SSID)] = '\0';
+        }
+        if (argc >= 4)
+        {
+            int wifi_key_len = os_strlen(argv[3]);
+            if (wifi_key_len > 0)
+            {
+                if (wifi_key_len >= 50)
+                {
+                    wifi_key_len = 49;
+                }
+                os_memcpy(wifi_key, argv[3], wifi_key_len);
+                wifi_key[wifi_key_len] = '\0';
+            }
+        }
+        else
+        {
+            os_memcpy(wifi_key, DEFAULT_WIFI_KEY, os_strlen(DEFAULT_WIFI_KEY));
+            wifi_key[os_strlen(DEFAULT_WIFI_KEY)] = '\0';
+        }
         if (media_demo_thread == NULL)
         {
             rtos_create_thread(&media_demo_thread,
