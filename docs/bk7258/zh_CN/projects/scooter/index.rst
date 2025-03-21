@@ -14,10 +14,11 @@
 
 	* 硬件配置：
 		* 核心板，**BK7258_QFN88_9X9_V3.2**
+		* 显示转接板，**BK7258_LCD_Interface_V3.0**
 		* 麦克小板，**BK_Module_Microphone_V1.1**
-        * 喇叭小板，**BK_Module_Speaker_V1.1**
+		* 喇叭小板，**BK_Module_Speaker_V1.1**
 		* PSRAM 8M/16M
-        * UVC Camera
+		* UVC Camera
 
 1.2 路径
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
@@ -25,6 +26,9 @@
 	工程路径: ``<bk_dashcam源代码路径>/project/scooter``
 
 	project编译指令: ``make bk7258 PROJECT=scooter``
+
+2. 框架图
+---------------------------------
 
 2.1 软件模块架构图
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
@@ -55,7 +59,7 @@
     :alt: relationship diagram Overview
     :figclass: align-center
 
-    Figure 1. module relationship diagram
+    Figure 2. module relationship diagram
 
 
 3. 演示说明
