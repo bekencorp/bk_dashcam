@@ -523,8 +523,8 @@ bk_err_t av_server_tcp_service_init(void *param, uint16_t rotate)
 
 	if (db_tcp_service != NULL)
 	{
-		LOGE("malloc db_tcp_service\n");
-		goto error;
+		LOGE("db_tcp_service already init\n");
+		return BK_FAIL;
 	}
 
 	ret = av_server_devices_init();
