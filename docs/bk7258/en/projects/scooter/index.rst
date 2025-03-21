@@ -12,6 +12,7 @@ This project is a scooter (two-wheeler) engineering effort that uses Wi-Fi navig
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 	* Hardware Configuration:
+
 		* Core board, **BK7258_QFN88_9X9_V3.2**
         * Display adapter board, **BK7258_LCD_interface_V3.0**
         * MIC small board, **BK_Module_Microphone_V1.1**
@@ -90,8 +91,9 @@ Before enabling the driving record function, ensure the SD card is readable.
 
 Use the following two commands to test::
 
-    Step 1: Enter the command to load the SD card. The command is "fatfstest M 1".
-    Step 2: Enter the command to read the file directory on the SD card. The command is "fatfstest S 1".
+    Step 1: Enter the command to mount the SD card. The command is "vfs mount fatfs /".
+    Step 2: Enter the command to scan all files on the SD card. The command is "vfs scan /".
+    Step 3: Enter the command to unmount the file directory on the SD card. The command is "vfs umount /".
 
 
 If no "fail" logs appear and the file names on the SD card are displayed, it indicates the SD card is readable.
@@ -104,7 +106,8 @@ Enabling the Driving Record Function::
     Step 3: Enter the command to start automatic recording. The command is "media save_auto 15 10000".
         10000 represents that data is stored in a file every 10,000 milliseconds.
         15 indicates that the files cycle every 15 files.
-        File names default to auto_0.h264, auto_1.h264, …, auto_15.h264.
+        Files are saved in the root directory by default.
+        File names default to auto_0.h264, auto_1.h264, …, auto_14.h264.
 
 Disabling the Driving Record Function::
 
