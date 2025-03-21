@@ -26,29 +26,61 @@
 
 	project编译指令: ``make bk7258 PROJECT=scooter``
 
-2. 演示说明
+2.1 软件模块架构图
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+
+    软件模块架构如下图所示：
+
+.. figure:: ../../../_static/scooter_arch.png
+    :align: center
+    :alt: module architecture Overview
+    :figclass: align-center
+
+    Figure 1. software module architecture
+
+..
+
+    * 两轮车方案中，APP将导航图像和导航语音发送到设备端进行导航；
+    * 两轮车方案中，UVC摄像头采集的数据经过H264编码后存储到SD卡上，保存行车记录；
+
+
+2.2 代码模块关系图
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+    如下图所示，方案使用的多媒体的接口，都定义在 **media_app.h** 中。
+
+.. figure:: ../../../_static/scooter_framework.png
+    :align: center
+    :alt: relationship diagram Overview
+    :figclass: align-center
+
+    Figure 1. module relationship diagram
+
+
+3. 演示说明
 ---------------------------------
 
 方案中导航功能和行车记录功能可单独使用
 
-2.1 导航功能
+3.1 导航功能
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 打开导航功能共三步，根据需求板子可以使用AP模式或STA模式
 
 板子使用AP模式::
 
-    步骤一：通过命令打开板子WIFI；命令为“test ap“
+    步骤一：通过命令打开板子WIFI；命令为“test ap“；
     步骤二：手机连接板子WIFI，wifi名“bicycle“，wifi密码”12345678”；
-    步骤三：手机端打开两轮车对应的app Calf，点击 to board将导航图像投屏到板子上；
+    步骤三：手机端打开两轮车对应的APP，将导航图像投屏到设备端；
 
-板子使用STA模式 ::
+板子使用STA模式::
 
-    步骤一：通过命令打开板子WIFI；命令为“test sta“
-    步骤二：手机打开热点，设置热点名“bicycle“，wifi密码”12345678”；
-    步骤三：手机端打开两轮车对应的app Calf，点击 to board将导航图像投屏到板子上；
+    步骤一：手机打开热点，设置热点名“bicycle“，wifi密码”12345678”；
+    步骤二：通过命令打开板子WIFI，自动连接"bicycle"；命令为“test sta“，自动连接WIFI "bicycle"；
+    步骤三：手机端打开两轮车对应的APP，将导航图像投屏到设备端；
 
-2.2 行车记录功能
+3.2 行车记录功能
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 打开行车记录功能前需要确保SD卡能正常被读取；
@@ -59,7 +91,7 @@
     步骤二：输入命令读取SD卡中文件目录，命令为“fatfstest S 1“
 
 
-上述两个步骤中没有出现fail log，并且能够打印出SD卡中文件名，说明SD卡能正常读取；
+上述两个步骤中没有出现fail log，并且能够打印出SD卡中的文件名，说明SD卡能正常读取；
 
 
 打开行车记录功能::
