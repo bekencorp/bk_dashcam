@@ -14,11 +14,11 @@ This project is a scooter (two-wheeler) engineering effort that uses Wi-Fi navig
 	* Hardware Configuration:
 
 		* Core board, **BK7258_QFN88_9X9_V3.2**
-        * Display adapter board, **BK7258_LCD_interface_V3.0**
-        * MIC small board, **BK_Module_Microphone_V1.1**
-        * SPEAKER small board, **BK_Module_Speaker_V1.1**
-        * PSRAM 8M/16M
-        * Support, UVC
+		* Display adapter board, **BK7258_LCD_interface_V3.0**
+		* MIC small board, **BK_Module_Microphone_V1.1**
+		* SPEAKER small board, **BK_Module_Speaker_V1.1**
+		* PSRAM 8M/16M
+		* Support, UVC
 
 1.2 Paths
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
@@ -72,17 +72,23 @@ The navigation function and driving record function can be used independently in
 
 To enable the navigation function, follow these three steps. The board can use either AP mode or STA mode based on your needs.
 
-AP Mode::
+AP mode::
 
-    Step 1: Enter the command to turn on the board's Wi-Fi. The command is "test ap".
-    Step 2: Connect your phone to the board's Wi-Fi. The SSID is "bicycle", and the password is "12345678".
-    Step 3: Open the corresponding scooter APP on your phone and cast the navigation image to the device.
+    Step 1: Open the board's Wi-Fi using the command "test ap <ssid> <key>";
+            The ssid and key can be modified by input parameters;
+            Default ssid is "bicycle", default key is "12345678";
+    Step 2: Query the board's IP address using the command "ip";
+    Step 3: Connect your phone to the board's Wi-Fi;
+    Step 4: Open the corresponding scooter APP on your phone, enter the board's IP address, and cast the navigation image to the device;
 
-STA Mode::
+STA mode::
 
-    Step 1: Turn on your phone's hotspot. Set the hotspot name to "bicycle" and the password to "12345678".
-    Step 2: Enter the command to turn on the board's Wi-Fi, which will automatically connect to "bicycle". The command is "test sta", and it will automatically connect to Wi-Fi "bicycle".
-    Step 3: Open the corresponding scooter APP on your phone and cast the navigation image to the device.
+    Step 1: Open your phone's hotspot and set the hotspot name to "<ssid>", with the Wi-Fi password as "<key>"
+    Step 2: Use the command "test sta <ssid> <key>" to open the board's Wi-Fi and connect to the phone hotspot;
+            The ssid and key can be modified by input parameters;
+            Default ssid is "bicycle", default key is "12345678"
+    Step 3: Query the board's IP address using the command "ip"
+    Step 4: Open the corresponding scooter APP on your phone, enter the board's IP address, and cast the navigation image to the device;
 
 3.2 Driving Record Function
 ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
