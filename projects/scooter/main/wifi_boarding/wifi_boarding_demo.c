@@ -11,6 +11,7 @@
 #include <os/os.h>
 
 #include "wifi_boarding_demo.h"
+#include "wifi_boarding_network.h"
 
 #include "components/bluetooth/bk_dm_bluetooth_types.h"
 #include "components/bluetooth/bk_dm_gap_ble_types.h"
@@ -18,6 +19,11 @@
 #include "components/bluetooth/bk_dm_gatt_types.h"
 #include "components/bluetooth/bk_dm_gatts.h"
 #include "dm_gatts.h"
+#include "components/bluetooth/bk_dm_bluetooth.h"
+
+#include <modules/wifi.h>
+#include <components/event.h>
+#include <components/netif.h>
 
 #if WIFI_BOARDING_DEMO_ENABLE
 
@@ -28,11 +34,31 @@ typedef struct
 
 #define MIN_VALUE(x, y) (((x) < (y)) ? (x): (y))
 
+static bk_boarding_info_t *bk_boarding_info = NULL;
+static ble_boarding_info_t *s_ble_boarding_info = NULL;
+
 
 static uint16_t s_prop_cli_config;
 static uint8_t s_ssid[64];
 static uint8_t s_password[64];
 static uint8_t s_wifi_boarding_is_init;
+static uint16_t s_bd_conn_ind = ~0;
+
+static beken_thread_t s_boarding_thd = NULL;
+static beken_queue_t s_boarding_queue = NULL;
+
+static bk_gatt_if_t s_bd_gatts_if = 0;
+
+enum
+{
+    BOARDING_IDX_SVC,
+    BOARDING_IDX_CHAR1,
+    BOARDING_IDX_CHAR1_DESC,
+    BOARDING_IDX_CHAR_OPERATION,
+    BOARDING_IDX_CHAR_SSID,
+    BOARDING_IDX_CHAR_PASSWORD,
+    BOARDING_IDX_NB,
+};
 
 static const bk_gatts_attr_db_t s_gatts_attr_db_service_boarding[] =
 {
@@ -40,28 +66,28 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_boarding[] =
         BK_GATT_PRIMARY_SERVICE_DECL(0xfa00),
     },
 
-    //    {
-    //        BK_GATT_CHAR_DECL(0xea01,
-    //                          0, NULL,
-    //                          BK_GATT_CHAR_PROP_BIT_READ | BK_GATT_CHAR_PROP_BIT_NOTIFY,
-    //                          BK_GATT_PERM_READ | BK_GATT_PERM_WRITE,
-    //                          BK_GATT_RSP_BY_APP),
-    //    },
-    //    {
-    //        BK_GATT_CHAR_DESC_DECL(BK_GATT_UUID_CHAR_CLIENT_CONFIG,
-    //                               sizeof(s_prop_cli_config), (uint8_t *)&s_prop_cli_config,
-    //                               BK_GATT_PERM_READ | BK_GATT_PERM_WRITE,
-    //                               BK_GATT_RSP_BY_APP),
-    //    },
-    //
-    //    //operation
-    //    {
-    //        BK_GATT_CHAR_DECL(0xea02,
-    //                          0, NULL,
-    //                          BK_GATT_CHAR_PROP_BIT_WRITE,
-    //                          BK_GATT_PERM_WRITE,
-    //                          BK_GATT_RSP_BY_APP),
-    //    },
+    {
+        BK_GATT_CHAR_DECL(0xea01,
+                          0, NULL,
+                          BK_GATT_CHAR_PROP_BIT_NOTIFY,
+                          BK_GATT_PERM_READ,
+                          BK_GATT_RSP_BY_APP),
+    },
+    {
+        BK_GATT_CHAR_DESC_DECL(BK_GATT_UUID_CHAR_CLIENT_CONFIG,
+                               sizeof(s_prop_cli_config), (uint8_t *)&s_prop_cli_config,
+                               BK_GATT_PERM_READ | BK_GATT_PERM_WRITE,
+                               BK_GATT_RSP_BY_APP),
+    },
+
+    //operation
+    {
+        BK_GATT_CHAR_DECL(0xea02,
+                          0, NULL,
+                          BK_GATT_CHAR_PROP_BIT_WRITE,
+                          BK_GATT_PERM_WRITE,
+                          BK_GATT_RSP_BY_APP),
+    },
 
     //ssid
     {
@@ -84,6 +110,21 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_boarding[] =
 
 static uint16_t s_boarding_attr_handle_list[sizeof(s_gatts_attr_db_service_boarding) / sizeof(s_gatts_attr_db_service_boarding[0])];
 
+int wifi_boarding_notify(uint8_t *data, uint16_t length)
+{
+    if (s_bd_conn_ind == 0xFF)
+    {
+        wboard_loge("BLE is disconnected, can not send data !!!");
+        return BK_FAIL;
+    }
+    else
+    {
+        wboard_logi("len %d", length);
+        bk_ble_gatts_send_indicate(s_bd_gatts_if, s_bd_conn_ind, s_boarding_attr_handle_list[BOARDING_IDX_CHAR1], length, data, 0);
+        return BK_OK;
+    }
+}
+
 static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk_ble_gatts_cb_param_t *comm_param)
 {
     ble_err_t ret = 0;
@@ -104,6 +145,9 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
                     param->remote_bda[1],
                     param->remote_bda[0]);
 
+        s_bd_gatts_if = gatts_if;
+        s_bd_conn_ind = param->conn_id;
+
         common_env_tmp = dm_ble_alloc_addition_data_by_addr(param->remote_bda, sizeof(*app_env_tmp));
 
         if (!common_env_tmp)
@@ -120,6 +164,9 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
     case BK_GATTS_DISCONNECT_EVT:
     {
         struct gatts_disconnect_evt_param *param = (typeof(param))comm_param;
+
+        s_bd_gatts_if = 0;
+        s_bd_conn_ind = ~0;
 
 
         wboard_logi("BK_GATTS_DISCONNECT_EVT %02X:%02X:%02X:%02X:%02X:%02X",
@@ -170,17 +217,26 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
         wboard_logi("read attr handle %d need rsp %d", param->handle, param->need_rsp);
 
         uint8_t *tmp_buff = NULL;
-        uint32_t buff_size = 0;
-        uint32_t index = 0;
+        uint16_t buff_size = 0;
+        uint8_t valid = 1;
 
-        if (dm_gatts_get_buff_from_attr_handle((bk_gatts_attr_db_t *)s_gatts_attr_db_service_boarding, s_boarding_attr_handle_list,
-                                               sizeof(s_boarding_attr_handle_list) / sizeof(s_boarding_attr_handle_list[0]), param->handle, &index, &tmp_buff, &buff_size))
+        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR1_DESC] == param->handle)
         {
-            wboard_logi("handle invalid");
-            break;
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
         }
-
-        wboard_logi("index %d size %d buff %p", index, buff_size, tmp_buff);
+        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_SSID] == param->handle)
+        {
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+        }
+        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_PASSWORD] == param->handle)
+        {
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+        }
+        else
+        {
+            wboard_loge("invalid read handle %d", param->handle);
+            valid = 0;
+        }
 
         if (param->need_rsp)
         {
@@ -189,10 +245,20 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
             rsp.attr_value.auth_req = BK_GATT_AUTH_REQ_NONE;
             rsp.attr_value.handle = param->handle;
             rsp.attr_value.offset = param->offset;
-            rsp.attr_value.len = final_len;
-            rsp.attr_value.value = tmp_buff + param->offset;
 
-            ret = bk_ble_gatts_send_response(gatts_if, param->conn_id, param->trans_id, BK_GATT_OK, &rsp);
+            if (tmp_buff && valid)
+            {
+                rsp.attr_value.len = final_len;
+                rsp.attr_value.value = tmp_buff + param->offset;
+            }
+            else
+            {
+                rsp.attr_value.len = 0;
+                rsp.attr_value.value = NULL;
+            }
+
+            ret = bk_ble_gatts_send_response(gatts_if, param->conn_id, param->trans_id,
+                                             (tmp_buff && valid ? BK_GATT_OK : BK_GATT_INSUF_RESOURCE), &rsp);
         }
     }
     break;
@@ -205,56 +271,144 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
 
         memset(&rsp, 0, sizeof(rsp));
 
-        wboard_logi("write attr handle %d need rsp %d", param->handle, param->need_rsp);
+        wboard_logi("write attr handle %d len %d offset %d need rsp %d", param->handle, param->len, param->offset, param->need_rsp);
 
         uint8_t *tmp_buff = NULL;
-        uint32_t buff_size = 0;
-        uint32_t index = 0;
+        uint16_t buff_size = 0;
+        uint8_t valid = 1;
 
-        if (dm_gatts_get_buff_from_attr_handle((bk_gatts_attr_db_t *)s_gatts_attr_db_service_boarding, s_boarding_attr_handle_list,
-                                               sizeof(s_boarding_attr_handle_list) / sizeof(s_boarding_attr_handle_list[0]), param->handle, &index, &tmp_buff, &buff_size))
+        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR1_DESC] == param->handle)
         {
-            wboard_logi("handle invalid");
-            break;
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
         }
-
-        wboard_logi("index %d size %d buff %p", index, buff_size, tmp_buff);
-
-        if (param->handle == s_boarding_attr_handle_list[1])
+        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_OPERATION] == param->handle)
         {
-            os_memset(s_ssid, 0, sizeof(s_ssid));
-            os_memcpy(s_ssid, param->value, param->len);
-            wboard_logi("write ssid %s", s_ssid);
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+            wboard_logi("write boarding op char");
         }
-        else if (param->handle == s_boarding_attr_handle_list[2])
+        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_SSID] == param->handle)
         {
-            os_memset(s_password, 0, sizeof(s_password));
-            os_memcpy(s_password, param->value, param->len);
-            wboard_logi("write password %s", s_password);
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+
+            if (s_ble_boarding_info->ssid_value)
+            {
+                os_free(s_ble_boarding_info->ssid_value);
+                s_ble_boarding_info->ssid_value = NULL;
+                s_ble_boarding_info->ssid_length = 0;
+            }
+
+            s_ble_boarding_info->ssid_length = param->len;
+            s_ble_boarding_info->ssid_value = os_malloc(param->len + 1);
+
+            if (!s_ble_boarding_info->ssid_value)
+            {
+                wboard_loge("alloc ssid err");
+                valid = 0;
+            }
+            else
+            {
+                os_memset(s_ble_boarding_info->ssid_value, 0, param->len + 1);
+                os_memcpy((uint8_t *)s_ble_boarding_info->ssid_value, param->value, param->len);
+
+                wboard_logi("ssid: %s", s_ble_boarding_info->ssid_value);
+            }
+        }
+        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_PASSWORD] == param->handle)
+        {
+            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+
+            if (s_ble_boarding_info->password_value)
+            {
+                os_free(s_ble_boarding_info->password_value);
+                s_ble_boarding_info->password_value = NULL;
+                s_ble_boarding_info->password_length = 0;
+            }
+
+            s_ble_boarding_info->password_length = param->len;
+            s_ble_boarding_info->password_value = os_malloc(param->len + 1);
+
+            if (!s_ble_boarding_info->password_value)
+            {
+                wboard_loge("alloc password err");
+                valid = 0;
+            }
+            else
+            {
+                os_memset(s_ble_boarding_info->password_value, 0, param->len + 1);
+                os_memcpy((uint8_t *)s_ble_boarding_info->password_value, param->value, param->len);
+                wboard_logi("password: %s", s_ble_boarding_info->password_value);
+            }
+        }
+        else
+        {
+            wboard_loge("invalid write handle %d", param->handle);
+            valid = 0;
         }
 
         if (param->need_rsp)
         {
-            final_len = MIN_VALUE(param->len, buff_size - param->offset);
-            memcpy(tmp_buff + param->offset, param->value, final_len);
+            final_len = (param->len < buff_size - param->offset ? param->len :  buff_size - param->offset);
+
+            if (tmp_buff)
+            {
+                os_memcpy(tmp_buff + param->offset, param->value, final_len);
+            }
 
             rsp.attr_value.auth_req = BK_GATT_AUTH_REQ_NONE;
             rsp.attr_value.handle = param->handle;
             rsp.attr_value.offset = param->offset;
-            rsp.attr_value.len = final_len;
-            rsp.attr_value.value = tmp_buff + param->offset;
 
-            ret = bk_ble_gatts_send_response(gatts_if, param->conn_id, param->trans_id, BK_GATT_OK, &rsp);
+            if (tmp_buff && valid)
+            {
+                rsp.attr_value.len = final_len;
+                rsp.attr_value.value = tmp_buff + param->offset;
+            }
+
+            ret = bk_ble_gatts_send_response(gatts_if, param->conn_id, param->trans_id, valid ? BK_GATT_OK : BK_GATT_INSUF_RESOURCE, &rsp);
         }
 
-        if (strnlen((char *)s_ssid, sizeof(s_ssid)) && strnlen((char *)s_password, sizeof(s_password)))
+        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_OPERATION] == param->handle)
         {
-#if CONFIG_WIFI_ENABLE
-            extern int demo_sta_app_init(char *oob_ssid, char *connect_key);
-            wboard_logi("ssid %s password %s, start connect ap", s_ssid, s_password);
-            demo_sta_app_init((char *)s_ssid, (char *)s_password);
-#else
-            wboard_logw("wifi not enable");
+            uint16_t opcode = 0;
+            uint16_t length = 0;
+            uint8_t *data = NULL;
+
+            if (param->len < 2)
+            {
+                wboard_loge("len invalid %d", param->len);
+                break;
+            }
+
+            opcode = param->value[0] | param->value[1] << 8;
+
+            if (param->len >= 4)
+            {
+                length = param->value[2] | param->value[3] << 8;
+            }
+
+            if (param->len > 4)
+            {
+                data = &param->value[4];
+            }
+
+            if (s_ble_boarding_info && s_ble_boarding_info->cb)
+            {
+                s_ble_boarding_info->cb(opcode, length, data);
+            }
+            else
+            {
+                wboard_loge("invalid s_ble_boarding_info");
+                break;
+            }
+
+#if 0
+            uint8_t test_data[20] = {0};
+            uint16_t test_data_len = sizeof(test_data) - 2 - 1 - 2;
+            os_memcpy(test_data, &opcode, sizeof(opcode));
+            test_data[2] = 0;
+            os_memcpy(test_data + 3, &test_data_len, sizeof(test_data_len));
+
+            wifi_boarding_notify(test_data, sizeof(test_data));
 #endif
         }
     }
@@ -295,6 +449,230 @@ static int32_t wifi_boarding_demo_reg_db(void)
     return ret;
 }
 
+bk_err_t boarding_send_msg(boarding_msg_t *msg)
+{
+    bk_err_t ret = BK_OK;
+
+    if (s_boarding_queue)
+    {
+        ret = rtos_push_to_queue(&s_boarding_queue, msg, BEKEN_NO_WAIT);
+
+        if (BK_OK != ret)
+        {
+            wboard_loge("%s failed\n", __func__);
+            return BK_FAIL;
+        }
+
+        return ret;
+    }
+
+    return ret;
+}
+
+void bk_boarding_event_notify(uint16_t opcode, int status)
+{
+    uint8_t data[] =
+    {
+        opcode & 0xFF, opcode >> 8,     /* opcode           */
+                              status & 0xFF,                                                          /* status           */
+                              0, 0,                                                                   /* payload length   */
+    };
+
+    wboard_logi("%s: %d, %d\n", __func__, opcode, status);
+    wifi_boarding_notify(data, sizeof(data));
+}
+
+void bk_boarding_event_notify_with_data(uint16_t opcode, int status, char *payload, uint16_t length)
+{
+    uint8_t data[1024] =
+    {
+        opcode & 0xFF, opcode >> 8,     /* opcode           */
+                              status & 0xFF,                  /* status           */
+                              length & 0xFF, length >> 8,     /* payload length   */
+                              0,
+    };
+
+    if (length > 1024 - 5)
+    {
+        wboard_loge("size %d over flow\n", length);
+        return;
+    }
+
+    os_memcpy(&data[5], payload, length);
+
+    wboard_logi("%s: %d, %d\n", __func__, opcode, status);
+    wifi_boarding_notify(data, length + 5);
+}
+
+static void bk_boarding_operation_handle(uint16_t opcode, uint16_t length, uint8_t *data)
+{
+    wboard_logw("%s, opcode: %04X, length: %u\n", __func__, opcode, length);
+
+    switch (opcode)
+    {
+        case BOARDING_OP_STATION_START:
+        {
+            boarding_msg_t msg;
+
+            msg.event = DBEVT_WIFI_STATION_CONNECT;
+            msg.param = (uint32_t)bk_boarding_info;
+            boarding_send_msg(&msg);
+        }
+        break;
+
+        case BOARDING_OP_SOFT_AP_START:
+        {
+            boarding_msg_t msg;
+
+            msg.event = DBEVT_WIFI_SOFT_AP_TURNING_ON;
+            msg.param = (uint32_t)bk_boarding_info;
+            boarding_send_msg(&msg);
+        }
+        break;
+
+        case BOARDING_OP_BLE_DISABLE:
+        {
+            boarding_msg_t msg;
+
+            msg.event = DBEVT_BLE_DISABLE;
+            msg.param = 0;
+            boarding_send_msg(&msg);
+        }
+        break;
+
+        case BOARDING_OP_SET_WIFI_CHANNEL:
+        {
+            STREAM_TO_UINT16(bk_boarding_info->channel, data);
+
+            wboard_logi("%s, BOARDING_OP_SET_WIFI_CHANNEL: %u\n", __func__, bk_boarding_info->channel);
+
+        }
+        break;
+
+        default:
+        {
+            wboard_loge("%s, unsupported opcode: 0x%04X !!!\n", __func__, opcode);
+        }
+        break;
+
+    }
+}
+
+static void boarding_message_handle(void)
+{
+    bk_err_t ret = BK_OK;
+    boarding_msg_t msg;
+
+    while (1)
+    {
+
+        ret = rtos_pop_from_queue(&s_boarding_queue, &msg, BEKEN_WAIT_FOREVER);
+
+        if (kNoErr == ret)
+        {
+            switch (msg.event)
+            {
+                case DBEVT_WIFI_STATION_CONNECT:
+                {
+                    wboard_logi("DBEVT_WIFI_STATION_CONNECT\n");
+
+                    bk_boarding_info_t *wifi_info = (bk_boarding_info_t *) msg.param;
+                    boarding_wifi_sta_connect(wifi_info->boarding_info.ssid_value,
+                                              wifi_info->boarding_info.password_value);
+                }
+                break;
+
+                case DBEVT_WIFI_STATION_CONNECTED:
+                {
+                    wboard_logi("DBEVT_WIFI_STATION_CONNECTED\n");
+
+                    netif_ip4_config_t ip4_config;
+                    extern uint32_t uap_ip_is_start(void);
+
+                    os_memset(&ip4_config, 0x0, sizeof(netif_ip4_config_t));
+                    bk_netif_get_ip4_config(NETIF_IF_AP, &ip4_config);
+                    if (uap_ip_is_start())
+                    {
+                        bk_netif_get_ip4_config(NETIF_IF_AP, &ip4_config);
+                    }
+                    else
+                    {
+                        bk_netif_get_ip4_config(NETIF_IF_STA, &ip4_config);
+                    }
+
+                    wboard_logi("ip: %s\n", ip4_config.ip);
+
+                    bk_boarding_event_notify_with_data(BOARDING_OP_STATION_START, BK_OK, ip4_config.ip, strlen(ip4_config.ip));
+                }
+                break;
+
+                case DBEVT_WIFI_STATION_DISCONNECTED:
+                {
+                    wboard_logi("DBEVT_WIFI_STATION_DISCONNECTED\n");
+                }
+                break;
+
+                case DBEVT_WIFI_SOFT_AP_TURNING_ON:
+                {
+                    wboard_logi("DBEVT_WIFI_SOFT_AP_TURNING_ON\n");
+                    bk_boarding_info_t *wifi_info = (bk_boarding_info_t *) msg.param;
+                    int ret = boarding_wifi_soft_ap_start(wifi_info->boarding_info.ssid_value,
+                                                          wifi_info->boarding_info.password_value,
+                                                          wifi_info->channel);
+
+                    if (ret == BK_OK)
+                    {
+                        bk_boarding_event_notify(BOARDING_OP_SOFT_AP_START, EVT_STATUS_OK);
+                    }
+                    else
+                    {
+                        bk_boarding_event_notify(BOARDING_OP_SOFT_AP_START, EVT_STATUS_ERROR);
+                    }
+                }
+                break;
+
+
+                case DBEVT_BLE_DISABLE:
+                {
+#if CONFIG_BLUETOOTH
+                    bk_bluetooth_deinit();
+                    wboard_logi("close bluetooth finish!\r\n");
+#endif
+                }
+                break;
+
+                case DBEVT_EXIT:
+                    goto exit;
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
+exit:
+
+    /* delate msg queue */
+    ret = rtos_deinit_queue(&s_boarding_queue);
+
+    if (ret != kNoErr)
+    {
+        wboard_loge("delete message queue fail\n");
+    }
+
+    s_boarding_queue = NULL;
+
+    wboard_loge("delete message queue complete\n");
+
+    /* delate task */
+    rtos_delete_thread(NULL);
+
+    s_boarding_thd = NULL;
+
+    wboard_loge("delete task complete\n");
+}
+
 #endif
 
 int32_t wifi_boarding_demo_main(void)
@@ -313,7 +691,50 @@ int32_t wifi_boarding_demo_main(void)
         return -1;
     }
 
+    bk_err_t ret = BK_OK;
+
+    ret = rtos_init_queue(&s_boarding_queue,
+                      "boarding_queue",
+                      sizeof(boarding_msg_t),
+                      10);
+
+    if (ret != BK_OK)
+    {
+        wboard_loge("%s, create boarding message queue failed\n");
+        return -1;
+    }
+
+    ret = rtos_create_thread(&s_boarding_thd,
+                         BEKEN_DEFAULT_WORKER_PRIORITY,
+                         "boarding_thd",
+                         (beken_thread_function_t)boarding_message_handle,
+                         2560,
+                         NULL);
+
+    if (ret != BK_OK)
+    {
+        wboard_loge("create boarding major thread fail\n");
+        return -1;
+    }
+
     s_wifi_boarding_is_init = 1;
+
+    if (bk_boarding_info == NULL)
+    {
+        bk_boarding_info = os_malloc(sizeof(bk_boarding_info_t));
+
+        if (bk_boarding_info == NULL)
+        {
+            wboard_loge("bk_boarding_info malloc failed\n");
+
+            return -1;
+        }
+
+        os_memset(bk_boarding_info, 0, sizeof(bk_boarding_info_t));
+    }
+
+    bk_boarding_info->boarding_info.cb = bk_boarding_operation_handle;
+    s_ble_boarding_info = &bk_boarding_info->boarding_info;
 
     wifi_boarding_demo_reg_db();
 

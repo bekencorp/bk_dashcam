@@ -48,6 +48,7 @@ if(CONFIG_BLE)
         hogpd/hogpd_demo_cli.c
         wifi_boarding/wifi_boarding_demo.c
         wifi_boarding/wifi_boarding_demo_cli.c
+        wifi_boarding/wifi_boarding_network.c
     )
 endif()
 

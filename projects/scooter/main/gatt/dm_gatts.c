@@ -37,6 +37,7 @@
 
 #define INVALID_ATTR_HANDLE 0
 #define ADV_HANDLE 0
+#define BEKEN_COMPANY_ID                    (0x05F0)
 
 #define MIN_VALUE(x, y) (((x) < (y)) ? (x): (y))
 
@@ -1943,15 +1944,17 @@ int dm_gatts_main(cli_gatt_param_t *param)
         BK_GATT_UUID_HID_SVC & 0xff, (BK_GATT_UUID_HID_SVC >> 8) & 0xff, 0x00, 0x00
     };
 
+    uint8_t company_id[2] = {BEKEN_COMPANY_ID & 0xFF, BEKEN_COMPANY_ID >> 8};
+
     bk_ble_adv_data_t adv_data =
     {
         .set_scan_rsp = 0,
         .include_name = 1,
-        .min_interval = 0x0006,
-        .max_interval = 0x0010,
+        //.min_interval = 0x0006,
+        //.max_interval = 0x0010,
         .appearance = 0x8001,//0xc103,
-        .manufacturer_len = 0,
-        .p_manufacturer_data = NULL,
+        .manufacturer_len = sizeof(company_id),
+        .p_manufacturer_data = company_id,
         .service_data_len = 0,
         .p_service_data = NULL,
         .service_uuid_len = sizeof(hogp_service_uuid),
