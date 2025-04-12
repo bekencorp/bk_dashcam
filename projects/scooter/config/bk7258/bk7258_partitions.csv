@@ -4,7 +4,7 @@
 bootloader,,68k,code,TRUE,FALSE
 app,,2312k,code,TRUE,FALSE
 app1,,1836k,code,TRUE,FALSE
-download,,204K,data,TRUE,
+download,,2696K,data,TRUE,
 usr_config,,136K,data,TRUE,
 easyflash,0x7FC000,8K,data,TRUE,
 rf_firmware,0x7FE000,4K,data,TRUE,
