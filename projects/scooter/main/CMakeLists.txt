@@ -87,6 +87,7 @@ if (CONFIG_LVGL)
 
     list(APPEND srcs
         lvgl/lvgl_app_ui.c
+        lvgl/avi_play.c
     )
 
 if (CONFIG_LV_USE_DEMO_METER)

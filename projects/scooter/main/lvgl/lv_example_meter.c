@@ -50,8 +50,6 @@ static void timer_cb(struct _lv_timer_t *arg)
  */
 void lv_example_meter(void)
 {
-	lv_vendor_disp_lock();
-
 	lv_disp_set_bg_color(lv_disp_get_default(), lv_color_white());
 	meter = lv_meter_create(lv_scr_act());
 	lv_obj_center(meter);
@@ -94,8 +92,6 @@ void lv_example_meter(void)
 	lv_anim_set_playback_time(&a, 2000);
 	lv_anim_set_var(&a, indic3);
 	lv_anim_start(&a);
-
-	lv_vendor_disp_unlock();
 }
 
 void lv_example_meter_exit(void)

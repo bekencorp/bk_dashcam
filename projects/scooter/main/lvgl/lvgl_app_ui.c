@@ -7,13 +7,14 @@
 #include "frame_buffer.h"
 #include "yuv_encode.h"
 #include "lv_vendor.h"
+#include "avi_play.h"
 
 extern uint8_t lvgl_video_switch;
-
 extern void lv_example_meter(void);
 extern void lv_example_meter_exit(void);
 
 static lv_vnd_config_t lv_vnd_config = {0};
+
 void lvgl_event_open_handle(media_mailbox_msg_t *msg)
 {
     os_printf("[%s] lvgl open start\r\n", __func__);
@@ -46,14 +47,15 @@ void lvgl_event_open_handle(media_mailbox_msg_t *msg)
     drv_tp_open(ppi_to_pixel_x(lcd_open->device_ppi), ppi_to_pixel_y(lcd_open->device_ppi), TP_MIRROR_NONE);
 #endif
 
+    lv_vendor_disp_lock();
     lv_example_meter();
+    lv_vendor_disp_unlock();
+
     lv_vendor_start();
 }
 
 void lvgl_event_close_handle(media_mailbox_msg_t *msg)
 {
-//    lcd_display_close();
-
 #if (CONFIG_TP)
     drv_tp_close();
 #endif
@@ -65,6 +67,7 @@ void lvgl_event_close_handle(media_mailbox_msg_t *msg)
     lvgl_video_switch = 0;
 
     lv_vendor_deinit();
+
 #ifdef CONFIG_LVGL_USE_PSRAM
     if (lv_vnd_config.draw_buf_2_1)
     {
@@ -78,6 +81,7 @@ void lvgl_event_close_handle(media_mailbox_msg_t *msg)
         lv_vnd_config.draw_buf_2_2 = NULL;
     }
 #endif
+
     os_memset(&lv_vnd_config, 0, sizeof(lv_vnd_config_t));
 }
 
