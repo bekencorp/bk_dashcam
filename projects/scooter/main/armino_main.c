@@ -13,7 +13,7 @@
 #include "gatt/dm_gatt.h"
 #include "gatt/dm_gatts.h"
 #include "hogpd/hogpd_demo.h"
-#include "wifi_boarding/wifi_boarding_demo.h"
+#include "wifi_boarding//wifi_boarding_demo_service.h"
 
 #if CONFIG_MEDIA_RECEIVE_DEMO
 #include "media_tcp_service.h"
@@ -372,7 +372,7 @@ int main(void)
         dm_gatt_main(&param);
         dm_gatts_main(&param);
         hogpd_demo_init();
-        wifi_boarding_demo_main();
+        wifi_boarding_demo_service_main();
 #endif
 #endif
 

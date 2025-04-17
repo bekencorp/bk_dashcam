@@ -11,19 +11,15 @@
 #include <os/os.h>
 
 #include "wifi_boarding_demo.h"
-#include "wifi_boarding_network.h"
+#include "dm_gatts.h"
 
 #include "components/bluetooth/bk_dm_bluetooth_types.h"
 #include "components/bluetooth/bk_dm_gap_ble_types.h"
 #include "components/bluetooth/bk_dm_gap_ble.h"
 #include "components/bluetooth/bk_dm_gatt_types.h"
 #include "components/bluetooth/bk_dm_gatts.h"
-#include "dm_gatts.h"
 #include "components/bluetooth/bk_dm_bluetooth.h"
 
-#include <modules/wifi.h>
-#include <components/event.h>
-#include <components/netif.h>
 
 #if WIFI_BOARDING_DEMO_ENABLE
 
@@ -34,20 +30,12 @@ typedef struct
 
 #define MIN_VALUE(x, y) (((x) < (y)) ? (x): (y))
 
-static bk_boarding_info_t *bk_boarding_info = NULL;
 static ble_boarding_info_t *s_ble_boarding_info = NULL;
-
 
 static uint16_t s_prop_cli_config;
 static uint8_t s_ssid[64];
 static uint8_t s_password[64];
 static uint8_t s_wifi_boarding_is_init;
-static uint16_t s_bd_conn_ind = ~0;
-
-static beken_thread_t s_boarding_thd = NULL;
-static beken_queue_t s_boarding_queue = NULL;
-
-static bk_gatt_if_t s_bd_gatts_if = 0;
 
 enum
 {
@@ -112,7 +100,9 @@ static uint16_t s_boarding_attr_handle_list[sizeof(s_gatts_attr_db_service_board
 
 int wifi_boarding_notify(uint8_t *data, uint16_t length)
 {
-    if (s_bd_conn_ind == 0xFF)
+    int16_t current_conn_id = dm_ble_gap_get_current_conn_id();
+
+    if (current_conn_id < 0)
     {
         wboard_loge("BLE is disconnected, can not send data !!!");
         return BK_FAIL;
@@ -120,7 +110,7 @@ int wifi_boarding_notify(uint8_t *data, uint16_t length)
     else
     {
         wboard_logi("len %d", length);
-        bk_ble_gatts_send_indicate(s_bd_gatts_if, s_bd_conn_ind, s_boarding_attr_handle_list[BOARDING_IDX_CHAR1], length, data, 0);
+        bk_ble_gatts_send_indicate(dm_gatts_get_current_if(), (uint16_t)current_conn_id, s_boarding_attr_handle_list[BOARDING_IDX_CHAR1], length, data, 0);
         return BK_OK;
     }
 }
@@ -145,9 +135,6 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
                     param->remote_bda[1],
                     param->remote_bda[0]);
 
-        s_bd_gatts_if = gatts_if;
-        s_bd_conn_ind = param->conn_id;
-
         common_env_tmp = dm_ble_alloc_addition_data_by_addr(param->remote_bda, sizeof(*app_env_tmp));
 
         if (!common_env_tmp)
@@ -164,10 +151,6 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
     case BK_GATTS_DISCONNECT_EVT:
     {
         struct gatts_disconnect_evt_param *param = (typeof(param))comm_param;
-
-        s_bd_gatts_if = 0;
-        s_bd_conn_ind = ~0;
-
 
         wboard_logi("BK_GATTS_DISCONNECT_EVT %02X:%02X:%02X:%02X:%02X:%02X",
                     param->remote_bda[5],
@@ -220,23 +203,19 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
         uint16_t buff_size = 0;
         uint8_t valid = 1;
 
-        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR1_DESC] == param->handle)
-        {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
-        }
-        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_SSID] == param->handle)
-        {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
-        }
-        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_PASSWORD] == param->handle)
-        {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
-        }
-        else
-        {
-            wboard_loge("invalid read handle %d", param->handle);
+		if(bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff))
+		{
+		    wboard_loge("can't get attr %d buff !!!", param->handle);
+		    valid = 0;
+		}
+
+		if(param->handle < s_boarding_attr_handle_list[1] || param->handle > s_boarding_attr_handle_list[sizeof(s_gatts_attr_db_service_boarding) / sizeof(s_gatts_attr_db_service_boarding[0]) - 1])
+		{
+            wboard_loge("attr hande %d app invalid !!!", param->handle);
             valid = 0;
-        }
+		}
+
+        wboard_logi("attr hande %d size %d buff %p", param->handle, buff_size, tmp_buff);
 
         if (param->need_rsp)
         {
@@ -277,19 +256,30 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
         uint16_t buff_size = 0;
         uint8_t valid = 1;
 
-        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR1_DESC] == param->handle)
+        if (bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff))
         {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+            wboard_loge("can't get attr %d buff !!!", param->handle);
+            valid = 0;
         }
-        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_OPERATION] == param->handle)
+
+        if (param->handle < s_boarding_attr_handle_list[1] || param->handle > s_boarding_attr_handle_list[sizeof(s_gatts_attr_db_service_boarding) / sizeof(s_gatts_attr_db_service_boarding[0]) - 1])
         {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
+            wboard_loge("attr hande %d app invalid !!!", param->handle);
+            valid = 0;
+        }
+
+        wboard_logi("index %d size %d buff %p", index, buff_size, tmp_buff);
+
+        if (param->handle == s_boarding_attr_handle_list[2])
+        {
+
+        }
+        else if (param->handle == s_boarding_attr_handle_list[3])
+        {
             wboard_logi("write boarding op char");
         }
-        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_SSID] == param->handle)
+        else if (param->handle == s_boarding_attr_handle_list[4])
         {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
-
             if (s_ble_boarding_info->ssid_value)
             {
                 os_free(s_ble_boarding_info->ssid_value);
@@ -313,10 +303,8 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
                 wboard_logi("ssid: %s", s_ble_boarding_info->ssid_value);
             }
         }
-        else if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_PASSWORD] == param->handle)
+        else if (param->handle == s_boarding_attr_handle_list[5])
         {
-            bk_ble_gatts_get_attr_value(param->handle, &buff_size, &tmp_buff);
-
             if (s_ble_boarding_info->password_value)
             {
                 os_free(s_ble_boarding_info->password_value);
@@ -347,7 +335,7 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
 
         if (param->need_rsp)
         {
-            final_len = (param->len < buff_size - param->offset ? param->len :  buff_size - param->offset);
+            final_len = MIN_VALUE(param->len, buff_size - param->offset);
 
             if (tmp_buff)
             {
@@ -367,7 +355,7 @@ static int32_t wifi_boarding_gatts_cb(bk_gatts_cb_event_t event, bk_gatt_if_t ga
             ret = bk_ble_gatts_send_response(gatts_if, param->conn_id, param->trans_id, valid ? BK_GATT_OK : BK_GATT_INSUF_RESOURCE, &rsp);
         }
 
-        if (s_boarding_attr_handle_list[BOARDING_IDX_CHAR_OPERATION] == param->handle)
+        if (param->handle == s_boarding_attr_handle_list[3])
         {
             uint16_t opcode = 0;
             uint16_t length = 0;
@@ -449,233 +437,9 @@ static int32_t wifi_boarding_demo_reg_db(void)
     return ret;
 }
 
-bk_err_t boarding_send_msg(boarding_msg_t *msg)
-{
-    bk_err_t ret = BK_OK;
-
-    if (s_boarding_queue)
-    {
-        ret = rtos_push_to_queue(&s_boarding_queue, msg, BEKEN_NO_WAIT);
-
-        if (BK_OK != ret)
-        {
-            wboard_loge("%s failed\n", __func__);
-            return BK_FAIL;
-        }
-
-        return ret;
-    }
-
-    return ret;
-}
-
-void bk_boarding_event_notify(uint16_t opcode, int status)
-{
-    uint8_t data[] =
-    {
-        opcode & 0xFF, opcode >> 8,     /* opcode           */
-                              status & 0xFF,                                                          /* status           */
-                              0, 0,                                                                   /* payload length   */
-    };
-
-    wboard_logi("%s: %d, %d\n", __func__, opcode, status);
-    wifi_boarding_notify(data, sizeof(data));
-}
-
-void bk_boarding_event_notify_with_data(uint16_t opcode, int status, char *payload, uint16_t length)
-{
-    uint8_t data[1024] =
-    {
-        opcode & 0xFF, opcode >> 8,     /* opcode           */
-                              status & 0xFF,                  /* status           */
-                              length & 0xFF, length >> 8,     /* payload length   */
-                              0,
-    };
-
-    if (length > 1024 - 5)
-    {
-        wboard_loge("size %d over flow\n", length);
-        return;
-    }
-
-    os_memcpy(&data[5], payload, length);
-
-    wboard_logi("%s: %d, %d\n", __func__, opcode, status);
-    wifi_boarding_notify(data, length + 5);
-}
-
-static void bk_boarding_operation_handle(uint16_t opcode, uint16_t length, uint8_t *data)
-{
-    wboard_logw("%s, opcode: %04X, length: %u\n", __func__, opcode, length);
-
-    switch (opcode)
-    {
-        case BOARDING_OP_STATION_START:
-        {
-            boarding_msg_t msg;
-
-            msg.event = DBEVT_WIFI_STATION_CONNECT;
-            msg.param = (uint32_t)bk_boarding_info;
-            boarding_send_msg(&msg);
-        }
-        break;
-
-        case BOARDING_OP_SOFT_AP_START:
-        {
-            boarding_msg_t msg;
-
-            msg.event = DBEVT_WIFI_SOFT_AP_TURNING_ON;
-            msg.param = (uint32_t)bk_boarding_info;
-            boarding_send_msg(&msg);
-        }
-        break;
-
-        case BOARDING_OP_BLE_DISABLE:
-        {
-            boarding_msg_t msg;
-
-            msg.event = DBEVT_BLE_DISABLE;
-            msg.param = 0;
-            boarding_send_msg(&msg);
-        }
-        break;
-
-        case BOARDING_OP_SET_WIFI_CHANNEL:
-        {
-            STREAM_TO_UINT16(bk_boarding_info->channel, data);
-
-            wboard_logi("%s, BOARDING_OP_SET_WIFI_CHANNEL: %u\n", __func__, bk_boarding_info->channel);
-
-        }
-        break;
-
-        default:
-        {
-            wboard_loge("%s, unsupported opcode: 0x%04X !!!\n", __func__, opcode);
-        }
-        break;
-
-    }
-}
-
-static void boarding_message_handle(void)
-{
-    bk_err_t ret = BK_OK;
-    boarding_msg_t msg;
-
-    while (1)
-    {
-
-        ret = rtos_pop_from_queue(&s_boarding_queue, &msg, BEKEN_WAIT_FOREVER);
-
-        if (kNoErr == ret)
-        {
-            switch (msg.event)
-            {
-                case DBEVT_WIFI_STATION_CONNECT:
-                {
-                    wboard_logi("DBEVT_WIFI_STATION_CONNECT\n");
-
-                    bk_boarding_info_t *wifi_info = (bk_boarding_info_t *) msg.param;
-                    boarding_wifi_sta_connect(wifi_info->boarding_info.ssid_value,
-                                              wifi_info->boarding_info.password_value);
-                }
-                break;
-
-                case DBEVT_WIFI_STATION_CONNECTED:
-                {
-                    wboard_logi("DBEVT_WIFI_STATION_CONNECTED\n");
-
-                    netif_ip4_config_t ip4_config;
-                    extern uint32_t uap_ip_is_start(void);
-
-                    os_memset(&ip4_config, 0x0, sizeof(netif_ip4_config_t));
-                    bk_netif_get_ip4_config(NETIF_IF_AP, &ip4_config);
-                    if (uap_ip_is_start())
-                    {
-                        bk_netif_get_ip4_config(NETIF_IF_AP, &ip4_config);
-                    }
-                    else
-                    {
-                        bk_netif_get_ip4_config(NETIF_IF_STA, &ip4_config);
-                    }
-
-                    wboard_logi("ip: %s\n", ip4_config.ip);
-
-                    bk_boarding_event_notify_with_data(BOARDING_OP_STATION_START, BK_OK, ip4_config.ip, strlen(ip4_config.ip));
-                }
-                break;
-
-                case DBEVT_WIFI_STATION_DISCONNECTED:
-                {
-                    wboard_logi("DBEVT_WIFI_STATION_DISCONNECTED\n");
-                }
-                break;
-
-                case DBEVT_WIFI_SOFT_AP_TURNING_ON:
-                {
-                    wboard_logi("DBEVT_WIFI_SOFT_AP_TURNING_ON\n");
-                    bk_boarding_info_t *wifi_info = (bk_boarding_info_t *) msg.param;
-                    int ret = boarding_wifi_soft_ap_start(wifi_info->boarding_info.ssid_value,
-                                                          wifi_info->boarding_info.password_value,
-                                                          wifi_info->channel);
-
-                    if (ret == BK_OK)
-                    {
-                        bk_boarding_event_notify(BOARDING_OP_SOFT_AP_START, EVT_STATUS_OK);
-                    }
-                    else
-                    {
-                        bk_boarding_event_notify(BOARDING_OP_SOFT_AP_START, EVT_STATUS_ERROR);
-                    }
-                }
-                break;
-
-
-                case DBEVT_BLE_DISABLE:
-                {
-#if CONFIG_BLUETOOTH
-                    bk_bluetooth_deinit();
-                    wboard_logi("close bluetooth finish!\r\n");
-#endif
-                }
-                break;
-
-                case DBEVT_EXIT:
-                    goto exit;
-                    break;
-
-                default:
-                    break;
-            }
-        }
-    }
-
-exit:
-
-    /* delate msg queue */
-    ret = rtos_deinit_queue(&s_boarding_queue);
-
-    if (ret != kNoErr)
-    {
-        wboard_loge("delete message queue fail\n");
-    }
-
-    s_boarding_queue = NULL;
-
-    wboard_loge("delete message queue complete\n");
-
-    /* delate task */
-    rtos_delete_thread(NULL);
-
-    s_boarding_thd = NULL;
-
-    wboard_loge("delete task complete\n");
-}
-
 #endif
 
-int32_t wifi_boarding_demo_main(void)
+int32_t wifi_boarding_demo_main(ble_boarding_info_t *info)
 {
 #if WIFI_BOARDING_DEMO_ENABLE
 
@@ -691,51 +455,9 @@ int32_t wifi_boarding_demo_main(void)
         return -1;
     }
 
-    bk_err_t ret = BK_OK;
-
-    ret = rtos_init_queue(&s_boarding_queue,
-                      "boarding_queue",
-                      sizeof(boarding_msg_t),
-                      10);
-
-    if (ret != BK_OK)
-    {
-        wboard_loge("%s, create boarding message queue failed\n");
-        return -1;
-    }
-
-    ret = rtos_create_thread(&s_boarding_thd,
-                         BEKEN_DEFAULT_WORKER_PRIORITY,
-                         "boarding_thd",
-                         (beken_thread_function_t)boarding_message_handle,
-                         2560,
-                         NULL);
-
-    if (ret != BK_OK)
-    {
-        wboard_loge("create boarding major thread fail\n");
-        return -1;
-    }
-
     s_wifi_boarding_is_init = 1;
 
-    if (bk_boarding_info == NULL)
-    {
-        bk_boarding_info = os_malloc(sizeof(bk_boarding_info_t));
-
-        if (bk_boarding_info == NULL)
-        {
-            wboard_loge("bk_boarding_info malloc failed\n");
-
-            return -1;
-        }
-
-        os_memset(bk_boarding_info, 0, sizeof(bk_boarding_info_t));
-    }
-
-    bk_boarding_info->boarding_info.cb = bk_boarding_operation_handle;
-    s_ble_boarding_info = &bk_boarding_info->boarding_info;
-
+    s_ble_boarding_info = info;
     wifi_boarding_demo_reg_db();
 
     wboard_logi("done");
