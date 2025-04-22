@@ -35,6 +35,7 @@ endif()
 if(CONFIG_BLE)
     list(APPEND incs
         gatt
+        ble_ota
     )
 
     list(APPEND srcs
@@ -118,7 +119,7 @@ endif()#CONFIG_MEDIA_RECEIVE_DEMO
 armino_component_register(
     SRCS "${srcs}"
     INCLUDE_DIRS "${incs}"
-	PRIV_REQUIRES bk_init bk_cli media_service aud_intf multimedia aac_decoder lvgl wifi_transfer lwip_intf_v2_1 avdk_utils audio_play audio_record mp3_play
+	PRIV_REQUIRES bk_init bk_cli media_service aud_intf multimedia aac_decoder lvgl wifi_transfer lwip_intf_v2_1 avdk_utils audio_play audio_record mp3_play ota
 )
 
 get_filename_component(config_component_name ${CMAKE_CURRENT_LIST_DIR} NAME)
