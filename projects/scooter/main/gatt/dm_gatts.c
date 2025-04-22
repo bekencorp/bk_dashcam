@@ -38,8 +38,13 @@
 #define INVALID_ATTR_HANDLE 0
 #define ADV_HANDLE 0
 #define BEKEN_COMPANY_ID                    (0x05F0)
+#define AUTO_ENABLE_ADV 1
 
 #define MIN_VALUE(x, y) (((x) < (y)) ? (x): (y))
+
+#if GATTS_TEST_ATTR_ENABLE
+    #define NUS_SERVICE 0
+#endif
 
 #define dm_gatts_app_env_t dm_gatt_demo_app_env_t
 
@@ -61,7 +66,7 @@ typedef struct
 
 typedef struct
 {
-    dm_gatts_db_reg_t reg[2];
+    dm_gatts_db_reg_t reg[5];
     uint32_t count;
 } dm_gatts_db_ctx_t;
 
@@ -70,11 +75,14 @@ static int32_t dm_gatts_set_adv_param(uint8_t local_addr_is_public);
 static dm_gatts_db_reg_t *find_db_ctx_by_attr_handle(uint16_t attr_handle);
 
 static beken_semaphore_t s_ble_sema = NULL;
+static beken_semaphore_t s_ble_data_sem = NULL;
 
 static bk_gatt_if_t s_gatts_if;
 static uint8_t s_dm_gatts_local_addr_is_public = 0;
 static dm_gatts_db_ctx_t s_dm_gatts_db_ctx;
 static uint8_t s_dm_gatts_is_init;
+static dm_ble_gatts_app_cb s_gatts_cb_list[2];
+static uint8_t s_db_init;
 
 #if GATTS_TEST_ATTR_ENABLE
 static beken_timer_t s_char_notify_timer;
@@ -158,8 +166,6 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_1[] =
     },
 };
 
-#define NUS_SERVICE 0
-
 #if NUS_SERVICE
 //static const uint8_t s_gatts_128_attr[] = {0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x34, 0x22, 0x00, 0x00};
 static const uint8_t s_gatts_nus_service_128_attr[] = {0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e};
@@ -223,18 +229,18 @@ static const bk_gatts_attr_db_t s_gatts_attr_db_service_2[] =
 #if NUS_SERVICE
     {
         BK_GATT_CHAR_DECL_128(s_gatts_nus_rx_char_128_attr,
-                          sizeof(s_gatts_nus_rx_test_buffer), s_gatts_nus_rx_test_buffer,
-                          BK_GATT_CHAR_PROP_BIT_WRITE_NR,
-                          BK_GATT_PERM_WRITE,
-                          BK_GATT_AUTO_RSP),
+                              sizeof(s_gatts_nus_rx_test_buffer), s_gatts_nus_rx_test_buffer,
+                              BK_GATT_CHAR_PROP_BIT_WRITE_NR,
+                              BK_GATT_PERM_WRITE,
+                              BK_GATT_AUTO_RSP),
     },
 
     {
         BK_GATT_CHAR_DECL_128(s_gatts_nus_tx_char_128_attr,
-                          0, NULL,
-                          BK_GATT_CHAR_PROP_BIT_NOTIFY,
-                          BK_GATT_PERM_WRITE,
-                          BK_GATT_AUTO_RSP),
+                              0, NULL,
+                              BK_GATT_CHAR_PROP_BIT_NOTIFY,
+                              BK_GATT_PERM_WRITE,
+                              BK_GATT_AUTO_RSP),
     },
     {
         BK_GATT_CHAR_DESC_DECL(BK_GATT_UUID_CHAR_CLIENT_CONFIG,
@@ -262,27 +268,42 @@ static uint16_t s_attr_handle_list2[sizeof(s_gatts_attr_db_service_2) / sizeof(s
 
 #endif
 
+static int32_t dm_ble_gatts_private_cb(bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk_ble_gatts_cb_param_t *param)
+{
+    int32_t ret;
+
+    for (int i = 0; i < sizeof(s_gatts_cb_list) / sizeof(s_gatts_cb_list[0]); ++i)
+    {
+        if (s_gatts_cb_list[i])
+        {
+            ret = s_gatts_cb_list[i](event, gatts_if, param);
+        }
+    }
+
+    return 0;
+}
+
 static int32_t dm_ble_gap_cb(bk_ble_gap_cb_event_t event, bk_ble_gap_cb_param_t *param)
 {
     gatt_logd("event %d", event);
 
     switch (event)
     {
-    case BK_BLE_GAP_SET_STATIC_RAND_ADDR_EVT:
-    {
-        struct ble_set_rand_cmpl_evt_param *pm = (typeof(pm))param;
-
-        if (pm->status)
-        {
-            gatt_loge("set rand addr err %d", pm->status);
-        }
-
-        if (s_ble_sema != NULL)
-        {
-            rtos_set_semaphore( &s_ble_sema );
-        }
-    }
-    break;
+    //    case BK_BLE_GAP_SET_STATIC_RAND_ADDR_EVT:
+    //    {
+    //        struct ble_set_rand_cmpl_evt_param *pm = (typeof(pm))param;
+    //
+    //        if (pm->status)
+    //        {
+    //            gatt_loge("set rand addr err %d", pm->status);
+    //        }
+    //
+    //        if (s_ble_sema != NULL)
+    //        {
+    //            rtos_set_semaphore( &s_ble_sema );
+    //        }
+    //    }
+    //    break;
 
     case BK_BLE_GAP_EXT_ADV_SET_RAND_ADDR_COMPLETE_EVT:
     {
@@ -453,6 +474,17 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
 
         gatt_logi("BK_GATTS_REG_EVT %d %d", param->status, param->gatt_if);
         s_gatts_if = param->gatt_if;
+
+        if (s_ble_sema != NULL)
+        {
+            rtos_set_semaphore( &s_ble_sema );
+        }
+    }
+    break;
+
+    case BK_GATTS_UNREG_EVT:
+    {
+        gatt_logi("BK_GATTS_UNREG_EVT");
 
         if (s_ble_sema != NULL)
         {
@@ -1036,11 +1068,28 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
 
         gatt_logi("BK_GATTS_CONF_EVT %d %d %d", param->status, param->conn_id, param->handle);
 
+        common_env_tmp = dm_ble_find_app_env_by_conn_id(param->conn_id);
+
+        if (!common_env_tmp || !common_env_tmp->data)
+        {
+            gatt_loge("conn_id %d not found %d %p", param->conn_id, common_env_tmp->data);
+            break;
+        }
+
+        app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
+
+        app_env_tmp->send_notify_status = param->status;
+
         dm_gatts_db_reg_t *tmp_reg = find_db_ctx_by_attr_handle(param->handle);
 
         if (tmp_reg && tmp_reg->cb)
         {
             tmp_reg->cb(event, gatts_if, comm_param);
+        }
+
+        if (s_ble_data_sem)
+        {
+            rtos_set_semaphore(&s_ble_data_sem);
         }
     }
     break;
@@ -1197,6 +1246,26 @@ static int32_t bk_gatts_cb (bk_gatts_cb_event_t event, bk_gatt_if_t gatts_if, bk
         struct gatts_mtu_evt_param *param = (typeof(param))comm_param;
 
         gatt_logi("BK_GATTS_MTU_EVT %d %d", param->conn_id, param->mtu);
+
+        common_env_tmp = dm_ble_find_app_env_by_conn_id(param->conn_id);
+
+        if (!common_env_tmp)
+        {
+            gatt_loge("not found conn_id %d !!!!", param->conn_id);
+        }
+        else
+        {
+            app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
+
+            if (!app_env_tmp)
+            {
+                gatt_loge("can't find app_env_tmp");
+            }
+            else
+            {
+                app_env_tmp->server_mtu = param->mtu;
+            }
+        }
     }
     break;
 
@@ -1292,12 +1361,14 @@ static int32_t dm_gatts_set_adv_param(uint8_t local_addr_is_public)
 
         gatt_logw("set adv param rpa because pair, addr type 0x%x", adv_param.own_addr_type);
     }
+
 #if SET_ADVTYPE_TO_IDENTITY_WHEN_NORPA
     else if (!g_dm_gap_use_rpa && !local_addr_is_public && 0 == dm_gatt_get_authen_status(nominal_addr, &nominal_addr_type, identity_addr, &identity_addr_type))
     {
         adv_param.own_addr_type = identity_addr_type;
         gatt_logw("set adv param no rpa because pair, addr type 0x%x", adv_param.own_addr_type);
     }
+
 #endif
     else
     {
@@ -1406,6 +1477,85 @@ int32_t dm_gatts_enable_service(uint32_t index, uint8_t enable)
     return 0;
 }
 
+int32_t dm_gatts_send_service_change_indicate(uint16_t conn_id, uint8_t all_connected)
+{
+    return bk_ble_gatts_send_service_change_indicate(s_gatts_if, conn_id, all_connected);
+}
+
+int32_t dm_gatts_send_notify(uint16_t gatt_conn_id, uint16_t attr_handle, uint8_t *data, uint32_t len, uint8_t is_notify)
+{
+    int32_t ret = 0;
+
+    dm_gatts_app_env_t *app_env_tmp = NULL;
+    dm_gatt_app_env_t *common_env_tmp = NULL;
+
+    if (!s_gatts_if)
+    {
+        gatt_loge("gatts not init");
+        return -1;
+    }
+
+    common_env_tmp = dm_ble_find_app_env_by_conn_id(gatt_conn_id);
+
+    if (!common_env_tmp || !common_env_tmp->data)
+    {
+        gatt_loge("conn_id %d not found %d %p", gatt_conn_id, common_env_tmp->data);
+        ret = -1;
+        goto end;
+    }
+
+    app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
+
+    if (!s_ble_data_sem)
+    {
+        ret = rtos_init_semaphore(&s_ble_data_sem, 1);
+
+        if (ret)
+        {
+            gatt_loge("init sem err %d", ret);
+            ret = -1;
+            goto end;
+        }
+    }
+
+    ret = bk_ble_gatts_send_indicate(s_gatts_if, (uint16_t)gatt_conn_id, attr_handle, len, data, is_notify ? 0 : 1);
+
+    if (ret)
+    {
+        gatt_loge("bk_ble_gatts_send_indicate err %d", ret);
+        ret = -1;
+        goto end;
+    }
+
+    ret = rtos_get_semaphore(&s_ble_data_sem, SYNC_CMD_TIMEOUT_MS);
+
+    if (ret)
+    {
+        gatt_loge("wait send indicate err %d", ret);
+        ret = -1;
+        goto end;
+    }
+
+
+end:;
+
+    ret = (app_env_tmp->send_notify_status ? -1 : 0);
+
+    app_env_tmp->send_notify_status = 0;
+
+    if (s_ble_data_sem)
+    {
+        if (rtos_deinit_semaphore(&s_ble_data_sem))
+        {
+            gatt_loge("rtos_deinit_semaphore s_ble_data_sem err %d", ret);
+        }
+
+        s_ble_data_sem = NULL;
+    }
+
+    return ret;
+}
+
 static dm_gatts_db_reg_t *find_db_ctx_by_attr_handle(uint16_t attr_handle)
 {
     for (uint32_t i = 0; i < sizeof(s_dm_gatts_db_ctx.reg) / sizeof(s_dm_gatts_db_ctx.reg[0]); ++i)
@@ -1423,9 +1573,10 @@ static dm_gatts_db_reg_t *find_db_ctx_by_attr_handle(uint16_t attr_handle)
     return NULL;
 }
 
-int32_t dm_gatts_reg_db(bk_gatts_attr_db_t *list, uint32_t count, uint16_t *attr_handle_list, dm_ble_gatts_db_cb cb)
+int32_t dm_gatts_reg_db(bk_gatts_attr_db_t *list, uint32_t count, uint16_t *attr_handle_list, dm_ble_gatts_db_cb cb, uint8_t need_create_tab)
 {
     uint32_t i = 0;
+    int32_t ret = 0;
 
     if (!list || !count)
     {
@@ -1453,20 +1604,23 @@ int32_t dm_gatts_reg_db(bk_gatts_attr_db_t *list, uint32_t count, uint16_t *attr
     s_dm_gatts_db_ctx.reg[i].cb = cb;
     s_dm_gatts_db_ctx.reg[i].status = DB_REG_STATUS_WAIT_COMPLETED;
 
-    ble_err_t ret = bk_ble_gatts_create_attr_tab(list, s_gatts_if, count, 30);
-
-    if (ret != 0)
+    if (need_create_tab)
     {
-        gatt_loge("bk_ble_gatts_create_attr_tab err %d", ret);
-        return -1;
-    }
+        ret = bk_ble_gatts_create_attr_tab(list, s_gatts_if, count, 30);
 
-    ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+        if (ret != 0)
+        {
+            gatt_loge("bk_ble_gatts_create_attr_tab err %d", ret);
+            return -1;
+        }
 
-    if (ret != kNoErr)
-    {
-        gatt_loge("rtos_get_semaphore err %d", ret);
-        return -1;
+        ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+
+        if (ret != kNoErr)
+        {
+            gatt_loge("rtos_get_semaphore err %d", ret);
+            return -1;
+        }
     }
 
     s_dm_gatts_db_ctx.reg[i].status = DB_REG_STATUS_COMPLETED;
@@ -1479,6 +1633,38 @@ int32_t dm_gatts_reg_db(bk_gatts_attr_db_t *list, uint32_t count, uint16_t *attr
     {
         gatt_loge("wait start/stop service err %d", ret);
         return -1;
+    }
+
+    return 0;
+}
+
+int32_t dm_gatts_unreg_db(bk_gatts_attr_db_t *list)
+{
+    uint32_t i = 0;
+    int32_t ret = 0;
+
+    if (!list)
+    {
+        gatt_loge("param err");
+        return -1;
+    }
+
+    for (i = 0; i < sizeof(s_dm_gatts_db_ctx.reg) / sizeof(s_dm_gatts_db_ctx.reg[0]); ++i)
+    {
+        if (s_dm_gatts_db_ctx.reg[i].db == list)
+        {
+            bk_ble_gatts_stop_service(s_dm_gatts_db_ctx.reg[i].attr_list[0]);
+
+            ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+
+            if (ret != kNoErr)
+            {
+                gatt_loge("wait start/stop service err %d", ret);
+            }
+
+            os_memset(&s_dm_gatts_db_ctx.reg[i], 0, sizeof(s_dm_gatts_db_ctx.reg[i]));
+            break;
+        }
     }
 
     return 0;
@@ -1519,6 +1705,28 @@ bk_gatt_if_t dm_gatts_get_current_if(void)
     return s_gatts_if;
 }
 
+int dm_gatts_add_gatts_callback(void *param)
+{
+    dm_ble_gatts_app_cb cb = (typeof(cb))param;
+
+    if (!cb)
+    {
+        return -1;
+    }
+
+    for (int i = 0; i < sizeof(s_gatts_cb_list) / sizeof(s_gatts_cb_list[0]); ++i)
+    {
+        if (!s_gatts_cb_list[i])
+        {
+            s_gatts_cb_list[i] = cb;
+            return 0;
+        }
+    }
+
+    gatt_loge("full !!!");
+    return -1;
+}
+
 int dm_gatts_main(cli_gatt_param_t *param)
 {
     ble_err_t ret = 0;
@@ -1546,7 +1754,8 @@ int dm_gatts_main(cli_gatt_param_t *param)
         }
     }
 
-    bk_ble_gatts_register_callback(bk_gatts_cb);
+    bk_ble_gatts_register_callback(dm_ble_gatts_private_cb);
+    dm_gatts_add_gatts_callback(bk_gatts_cb);
 
     ret = bk_ble_gatts_app_register(0);
 
@@ -1826,36 +2035,39 @@ int dm_gatts_main(cli_gatt_param_t *param)
 
 #elif GATTS_TEST_ATTR_ENABLE
 
-    ret = bk_ble_gatts_create_attr_tab(s_gatts_attr_db_service_1, s_gatts_if, sizeof(s_gatts_attr_db_service_1) / sizeof(s_gatts_attr_db_service_1[0]), 30);
-
-    if (ret != 0)
+    if (!s_db_init)
     {
-        gatt_loge("bk_ble_gatts_create_attr_tab err %d", ret);
-        return -1;
-    }
+        ret = bk_ble_gatts_create_attr_tab(s_gatts_attr_db_service_1, s_gatts_if, sizeof(s_gatts_attr_db_service_1) / sizeof(s_gatts_attr_db_service_1[0]), 30);
 
-    ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+        if (ret != 0)
+        {
+            gatt_loge("bk_ble_gatts_create_attr_tab err %d", ret);
+            return -1;
+        }
 
-    if (ret != kNoErr)
-    {
-        gatt_loge("rtos_get_semaphore err %d", ret);
-        return -1;
-    }
+        ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
 
-    ret = bk_ble_gatts_create_attr_tab(s_gatts_attr_db_service_2, s_gatts_if, sizeof(s_gatts_attr_db_service_2) / sizeof(s_gatts_attr_db_service_2[0]), 30);
+        if (ret != kNoErr)
+        {
+            gatt_loge("rtos_get_semaphore err %d", ret);
+            return -1;
+        }
 
-    if (ret != 0)
-    {
-        gatt_loge("bk_ble_gatts_create_attr_tab 2 err %d", ret);
-        return -1;
-    }
+        ret = bk_ble_gatts_create_attr_tab(s_gatts_attr_db_service_2, s_gatts_if, sizeof(s_gatts_attr_db_service_2) / sizeof(s_gatts_attr_db_service_2[0]), 30);
 
-    ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+        if (ret != 0)
+        {
+            gatt_loge("bk_ble_gatts_create_attr_tab 2 err %d", ret);
+            return -1;
+        }
 
-    if (ret != kNoErr)
-    {
-        gatt_loge("rtos_get_semaphore err %d", ret);
-        return -1;
+        ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+
+        if (ret != kNoErr)
+        {
+            gatt_loge("rtos_get_semaphore err %d", ret);
+            return -1;
+        }
     }
 
     bk_ble_gatts_start_service(s_service_attr_handle);
@@ -1877,6 +2089,8 @@ int dm_gatts_main(cli_gatt_param_t *param)
         gatt_loge("rtos_get_semaphore err %d", ret);
         return -1;
     }
+
+    s_db_init = 1;
 
 #endif
 
@@ -1901,6 +2115,7 @@ int dm_gatts_main(cli_gatt_param_t *param)
         goto error;
     }
 
+#if AUTO_ENABLE_ADV
     ret = dm_gatts_set_adv_param(s_dm_gatts_local_addr_is_public);
 
     if (ret != kNoErr)
@@ -1925,10 +2140,11 @@ int dm_gatts_main(cli_gatt_param_t *param)
         gatt_logw("set adv random addr with generate rpa");
         need_set_random_addr = 1;
     }
+
 #if SET_ADVTYPE_TO_IDENTITY_WHEN_NORPA
     else if (!g_dm_gap_use_rpa && !s_dm_gatts_local_addr_is_public && 0 == dm_gatt_get_authen_status(NULL, NULL, NULL, &identity_addr_type))
     {
-        if(identity_addr_type == BLE_ADDR_TYPE_RANDOM)
+        if (identity_addr_type == BLE_ADDR_TYPE_RANDOM)
         {
             gatt_logw("set adv random addr with identity addr because no rpa pair exist, type %d", identity_addr_type);
 
@@ -1941,6 +2157,7 @@ int dm_gatts_main(cli_gatt_param_t *param)
             gatt_logw("no need set adv random addr because no rpa pair exist, type %d", identity_addr_type);
         }
     }
+
 #endif
     else if (!s_dm_gatts_local_addr_is_public)
     {
@@ -2077,8 +2294,92 @@ int dm_gatts_main(cli_gatt_param_t *param)
         goto error;
     }
 
+#endif
     s_dm_gatts_is_init = 1;
 error:
     return 0;
 }
 
+int dm_gatts_deinit()
+{
+    int32_t ret = 0;
+
+    if (!s_dm_gatts_is_init)
+    {
+        gatt_loge("already deinit");
+        return -1;
+    }
+
+    ret = bk_ble_gatts_app_unregister(s_gatts_if);
+
+    if (ret)
+    {
+        gatt_loge("unreg err %d", ret);
+    }
+
+    ret = rtos_get_semaphore(&s_ble_sema, SYNC_CMD_TIMEOUT_MS);
+
+    if (ret != kNoErr)
+    {
+        gatt_loge("rtos_get_semaphore unreg err %d", ret);
+    }
+
+    if (s_ble_sema)
+    {
+        rtos_deinit_semaphore(&s_ble_sema);
+        s_ble_sema = NULL;
+    }
+
+    if (s_ble_data_sem)
+    {
+        rtos_deinit_semaphore(&s_ble_data_sem);
+        s_ble_data_sem = NULL;
+    }
+
+    bk_ble_gatts_register_callback(NULL);
+
+    s_gatts_if = 0;
+    s_dm_gatts_local_addr_is_public = 0;
+    os_memset(&s_dm_gatts_db_ctx, 0, sizeof(s_dm_gatts_db_ctx));
+    os_memset(s_gatts_cb_list, 0, sizeof(s_gatts_cb_list));
+
+#if GATTS_TEST_ATTR_ENABLE
+
+    if (rtos_is_timer_init(&s_char_notify_timer))
+    {
+        if (rtos_is_timer_running(&s_char_notify_timer))
+        {
+            rtos_stop_timer(&s_char_notify_timer);
+        }
+
+        rtos_deinit_timer(&s_char_notify_timer);
+    }
+
+    //    s_service_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char_desc_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char2_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char2_desc_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char_auto_rsp_attr_handle = INVALID_ATTR_HANDLE;
+    //    s_char4_attr_handle = INVALID_ATTR_HANDLE;
+
+#endif
+
+    s_dm_gatts_is_init = 0;
+    return 0;
+}
+
+int32_t dm_gatts_deinit_because_bluetooth_deinit_future()
+{
+    s_db_init = 0;
+#if GATTS_TEST_ATTR_ENABLE
+    s_service_attr_handle = INVALID_ATTR_HANDLE;
+    s_char_attr_handle = INVALID_ATTR_HANDLE;
+    s_char_desc_attr_handle = INVALID_ATTR_HANDLE;
+    s_char2_attr_handle = INVALID_ATTR_HANDLE;
+    s_char2_desc_attr_handle = INVALID_ATTR_HANDLE;
+    s_char_auto_rsp_attr_handle = INVALID_ATTR_HANDLE;
+    s_char4_attr_handle = INVALID_ATTR_HANDLE;
+#endif
+    return 0;
+}
