@@ -9,6 +9,8 @@ enum
     BT_MNG_MODE_RECONNECTING,      /**< no-connectable and no-discoverable*/
     BT_MNG_MODE_CONNECTEED,        /**< no-connectable and no-discoverable*/
     BT_MNG_MODE_CONNECTABLE,       /**< connectable and no-discoverable */
+    BT_MNG_MODE_IDLE,              /**< no-connectable and no-discoverable*/
+    BT_MNG_MODE_DISCOVERABLE_ONLY, /**< no-connectable and discoverable*/
 };
 
 enum
@@ -37,8 +39,9 @@ typedef struct
 int bt_manager_register_callback(btm_callback_s *cb);
 void bt_manager_start_reconnect(uint8_t *addr, uint8_t immediate);
 void bt_manager_set_mode(uint8_t mode);
+uint8_t bt_manager_get_mode(void);
 int bt_manager_init();
 uint8_t bt_manager_get_connect_state();
 void bt_manager_set_connect_state(uint8_t state);
 uint8_t* bt_manager_get_reconnect_device();
-uint8_t* bt_manager_get_connected_device();
+uint8_t* bt_manager_get_connected_device();int bt_manager_unregister_callback(uint8_t index);

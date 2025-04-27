@@ -98,6 +98,7 @@ enum
     BT_AUDIO_D2DP_DATA_IND_MSG = 3,
     BT_AUDIO_D2DP_SEND_DATA_2_SPK_MSG = 4,
     BT_AUDIO_WIFI_STATE_UPDATE_MSG = 5,
+    BT_AUDIO_EXIT_MSG = 6,
 };
 
 
@@ -152,6 +153,9 @@ static beken_semaphore_t s_bt_api_event_cb_sema = NULL;
 static beken_semaphore_t s_bt_avrcp_event_cb_sema = NULL;
 
 static audio_play_t *s_audio_play_obj;
+
+static uint8_t s_a2dp_sink_is_inited = 0;
+static uint8_t s_a2dp_sink_bt_manager_index = 0xff;
 
 static bk_err_t bk_bt_dac_set_gain(uint8_t gain)
 {
@@ -215,6 +219,29 @@ static bk_err_t one_spk_frame_played_cmpl_handler(unsigned int size)
         LOGE("%s, send queue failed\r\n", __func__);
     }
     return BK_OK;
+}
+
+static void bt_audio_sink_task_exit(void)
+{
+    bt_audio_sink_demo_msg_t demo_msg;
+    int rc = -1;
+
+    os_memset(&demo_msg, 0x0, sizeof(bt_audio_sink_demo_msg_t));
+
+    if (bt_audio_sink_demo_msg_que == NULL)
+    {
+        return;
+    }
+
+    demo_msg.type = BT_AUDIO_EXIT_MSG;
+    demo_msg.len = 0;
+
+    rc = rtos_push_to_queue(&bt_audio_sink_demo_msg_que, &demo_msg, BEKEN_NO_WAIT);
+
+    if (kNoErr != rc)
+    {
+        LOGE("%s, send queue failed\r\n", __func__);
+    }
 }
 
 void bt_audio_sink_demo_main(void *arg)
@@ -492,12 +519,20 @@ void bt_audio_sink_demo_main(void *arg)
             }
             break;
 
+            case BT_AUDIO_EXIT_MSG:
+            {
+                LOGI("BT_AUDIO_EXIT_MSG \r\n");
+                goto exit;
+            }
+            break;
+
             default:
                 break;
             }
         }
     }
 
+exit:
     rtos_deinit_queue(&bt_audio_sink_demo_msg_que);
     bt_audio_sink_demo_msg_que = NULL;
     bt_audio_sink_demo_thread_handle = NULL;
@@ -1306,6 +1341,12 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
     int ret = 0;
     LOGI("%s\r\n", __func__);
 
+    if (s_a2dp_sink_is_inited)
+    {
+        LOGE("already init");
+        return -1;
+    }
+
     if (aac_supported)
     {
 #if (!CONFIG_AAC_DECODER)
@@ -1354,7 +1395,7 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
         .start_disconnect_cb = bk_bt_a2dp_disconnect,
         .stop_connect_cb = bk_bt_a2dp_stop_connect,
     };
-    bt_manager_register_callback(&btm_cb);
+    s_a2dp_sink_bt_manager_index = bt_manager_register_callback(&btm_cb);
 
     bt_audio_sink_demo_task_init();
 
@@ -1410,9 +1451,57 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
         return -1;
     }
 
+    s_a2dp_sink_is_inited = 1;
     return 0;
 }
 
+int a2dp_sink_demo_deinit(void)
+{
+    int ret = 0;
+    LOGI("%s\r\n", __func__);
+
+    if (!s_a2dp_sink_is_inited)
+    {
+        LOGE("already deinit");
+        return -1;
+    }
+
+    if (s_bt_api_event_cb_sema)
+    {
+        rtos_deinit_semaphore(&s_bt_api_event_cb_sema);
+        s_bt_api_event_cb_sema = NULL;
+    }
+
+    if (s_bt_avrcp_event_cb_sema)
+    {
+        rtos_deinit_semaphore(&s_bt_avrcp_event_cb_sema);
+        s_bt_avrcp_event_cb_sema = NULL;
+    }
+
+#if CONFIG_WIFI_COEX_SCHEME
+    coex_bt_if_init(NULL);
+#endif
+
+    bt_manager_unregister_callback(s_a2dp_sink_bt_manager_index);
+    s_a2dp_sink_bt_manager_index = 0xFF;
+
+    bk_bt_avrcp_ct_register_callback(NULL);
+    bk_bt_avrcp_tg_register_callback(NULL);
+    bk_bt_a2dp_register_callback(NULL);
+    bk_bt_a2dp_sink_register_data_callback(NULL);
+
+    bt_audio_sink_task_exit();
+
+    bk_bt_avrcp_ct_deinit();
+
+    bk_bt_avrcp_tg_deinit();
+
+    bk_bt_a2dp_sink_deinit();
+
+    s_a2dp_sink_is_inited = 0;
+
+    return 0;
+}
 
 static int speaker_task_init()
 {

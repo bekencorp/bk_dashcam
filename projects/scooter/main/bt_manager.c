@@ -103,10 +103,18 @@ static char *bt_manager_mode_2_str(uint8_t mode)
         return "connected-conndisable-inqdisable";
     case BT_MNG_MODE_CONNECTABLE:
         return "connable-inqdisable";
+    case BT_MNG_MODE_IDLE:
+        return "idle-conndisable-inqdisable";
+    case BT_MNG_MODE_DISCOVERABLE_ONLY:
+        return "dis_only-conndisable-inqable";
     }
     return "unknow mode";
 }
 
+uint8_t bt_manager_get_mode(void)
+{
+    return btm_env.mode;
+}
 
 void bt_manager_set_mode(uint8_t mode)
 {
@@ -128,6 +136,12 @@ void bt_manager_set_mode(uint8_t mode)
         break;
     case BT_MNG_MODE_CONNECTABLE:
         bk_bt_gap_set_visibility(BK_BT_CONNECTABLE, BK_BT_NON_DISCOVERABLE);
+        break;
+    case BT_MNG_MODE_IDLE:
+        bk_bt_gap_set_visibility(BK_BT_NON_CONNECTABLE, BK_BT_NON_DISCOVERABLE);
+        break;
+    case BT_MNG_MODE_DISCOVERABLE_ONLY:
+        bk_bt_gap_set_visibility(BK_BT_NON_CONNECTABLE, BK_BT_DISCOVERABLE);
         break;
     default:
         break;
@@ -443,6 +457,18 @@ int bt_manager_register_callback(btm_callback_s *cb)
     }
     LOGE("%s, callback max resource, reg fail !! \n", __func__);
     return MAX_PROFILE_NUM;
+}
+
+int bt_manager_unregister_callback(uint8_t index)
+{
+    if (index >= MAX_PROFILE_NUM)
+    {
+        LOGE("%s, wrong index %d !! \n", __func__, index);
+        return -1;
+    }
+
+    os_memset(&btm_cbs[index], 0, sizeof(btm_callback_s));
+    return 0;
 }
 
 uint8_t bt_manager_get_connect_state()

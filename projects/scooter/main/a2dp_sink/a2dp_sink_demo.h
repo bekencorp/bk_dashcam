@@ -14,6 +14,7 @@ extern "C" {
 
 int a2dp_sink_demo_init(uint8_t aac_supported);
 int32_t bk_bt_app_avrcp_ct_get_attr(uint32_t attr);
+int a2dp_sink_demo_deinit(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

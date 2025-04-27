@@ -298,6 +298,56 @@ int32_t bluetooth_storage_save_volume(uint8_t *addr, uint8_t volume)
     return 0;
 }
 
+int32_t bluetooth_storage_find_addr_by_hash(uint8_t *addr, uint32_t hash)
+{
+    if (!s_bt_user_storage)
+    {
+        os_printf("%s not init\n", __func__);
+        return -1;
+    }
+
+    for (int i = 0; i < sizeof(s_bt_user_storage->linkkey) / sizeof(s_bt_user_storage->linkkey[0]); ++i)
+    {
+        if (hash == s_bt_user_storage->linkkey[i].hash)
+        {
+            if (addr)
+            {
+                os_memcpy(addr, s_bt_user_storage->linkkey[i].addr, 6);
+            }
+
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+int32_t bluetooth_storage_save_hash(uint8_t *addr, uint32_t hash)
+{
+    int32_t index = 0;
+
+    if (!s_bt_user_storage)
+    {
+        os_printf("%s not init\n", __func__);
+        return -1;
+    }
+
+    index = bluetooth_storage_find_linkkey_info_index(addr, NULL);
+
+    if (index >= 0)
+    {
+        s_bt_user_storage->linkkey[index].hash = hash;
+    }
+    else
+    {
+        os_printf("%s, not find the device info, %02X:%02X:%02X:%02X:%02X:%02X\n", __func__,
+                    addr[5],addr[4],addr[3],addr[2],addr[1],addr[0]);
+        return -1;
+    }
+
+    return 0;
+}
+
 int32_t bluetooth_storage_del_linkkey_info(uint8_t *addr)
 {
     int32_t ret = 0;
@@ -504,6 +554,65 @@ int32_t bluetooth_storage_read_local_key(bk_ble_local_keys_t *key)
 }
 
 #endif
+
+static uint8_t bluetooth_storage_is_addr_valid(uint8_t *addr)
+{
+    uint8_t sum_ff = 0xff, sum_zero = 0;
+
+    for (int i = 0; i < 6; ++i)
+    {
+        sum_ff &= addr[i];
+        sum_zero |= addr[i];
+    }
+
+    return sum_ff != 0xff && sum_zero != 0;
+}
+
+uint8_t bluetooth_storage_get_bond_device_num(void)
+{
+    if (!s_bt_user_storage)
+    {
+        os_printf("%s not init\n", __func__);
+        return 0;
+    }
+
+    uint8_t count = 0;
+    for (int i = 0; i < sizeof(s_bt_user_storage->linkkey) / sizeof(s_bt_user_storage->linkkey[0]); ++i)
+    {
+        if (bluetooth_storage_is_addr_valid(s_bt_user_storage->linkkey[i].addr))
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+uint32_t bluetooth_storage_get_bond_hash(uint16_t hasharray[], uint32_t arraylen )
+{
+    if (!s_bt_user_storage)
+    {
+        os_printf("%s not init\n", __func__);
+        return 0;
+    }
+
+    uint8_t count = 0;
+    for (int i = 0; i < sizeof(s_bt_user_storage->linkkey) / sizeof(s_bt_user_storage->linkkey[0]); ++i)
+    {
+        if (bluetooth_storage_is_addr_valid(s_bt_user_storage->linkkey[i].addr))
+        {
+            uint16_t temp_hash = s_bt_user_storage->linkkey[i].hash;
+            os_memcpy(&hasharray[count], &temp_hash, sizeof(temp_hash));
+            count++;
+            if (count == arraylen)
+            {
+                break;
+            }
+        }
+    }
+
+    return count;
+}
 
 int32_t bluetooth_storage_init(void)
 {

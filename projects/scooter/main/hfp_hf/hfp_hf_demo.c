@@ -65,6 +65,7 @@ enum
     BT_AUDIO_VOICE_START_MSG = 1,
     BT_AUDIO_VOICE_STOP_MSG = 2,
     BT_AUDIO_VOICE_IND_MSG = 3,
+    BT_AUDIO_VOICE_TASK_EXIT_MSG = 4,
 };
 
 
@@ -123,6 +124,9 @@ static beken_thread_t hf_mic_thread_handle = NULL;
 static beken_semaphore_t hf_speaker_sema = NULL;
 static audio_play_t *s_audio_play_obj;
 static audio_record_t *s_audio_record_obj;
+
+static uint8_t s_hfp_hf_is_inited = 0;
+static uint8_t s_hfp_hf_is_iphone = 0;
 
 #if HF_LOCAL_ROLLBACK_TEST
 static uint16_t mic_read_size = 0;
@@ -229,6 +233,25 @@ static void bt_audio_hf_sco_disconnected(void)
     }
 }
 
+static void bt_audio_task_exit(void)
+{
+    bt_audio_hf_demo_msg_t demo_msg;
+    int rc = -1;
+
+    os_memset(&demo_msg, 0x0, sizeof(bt_audio_hf_demo_msg_t));
+    if (bt_audio_hf_demo_msg_que == NULL)
+        return;
+
+    demo_msg.type = BT_AUDIO_VOICE_TASK_EXIT_MSG;
+    demo_msg.len = 0;
+
+    rc = rtos_push_to_queue(&bt_audio_hf_demo_msg_que, &demo_msg, BEKEN_NO_WAIT);
+    if (kNoErr != rc)
+    {
+        LOGI("%s, send queue failed\r\n", __func__);
+    }
+}
+
 void bk_bt_app_hfp_client_cb(bk_hf_client_cb_event_t event, bk_hf_client_cb_param_t *param)
 {
     LOGI("%s event: %d, addr:%02x:%02x:%02x:%02x:%02x:%02x\r\n", __func__, event, param->remote_bda[0], param->remote_bda[1],
@@ -276,6 +299,7 @@ void bk_bt_app_hfp_client_cb(bk_hf_client_cb_event_t event, bk_hf_client_cb_para
                      param->remote_bda [ 2 ], param->remote_bda [ 3 ],
                      param->remote_bda [ 4 ], param->remote_bda [ 5 ]);
                 os_memset(hfp_profile_peer_addr, 0, sizeof(hfp_profile_peer_addr));
+                s_hfp_hf_is_iphone = 0;
             }
         }
         break;
@@ -394,6 +418,8 @@ void bk_bt_app_hfp_client_cb(bk_hf_client_cb_event_t event, bk_hf_client_cb_para
                 case HFP_STATUS_WAIT_VGM:
                     s_hfp_status_mach = HFP_STATUS_WAIT_DONE;
                     LOGI("%s end op\n", __func__);
+                    char *at_cgmi = "AT+CGMI?";
+                    hfp_demo_cust_cmd((uint8_t*)at_cgmi);
                     break;
                 }
 
@@ -551,6 +577,17 @@ void bk_bt_app_hfp_client_cb(bk_hf_client_cb_event_t event, bk_hf_client_cb_para
             LOGI("RING HPF incoming call ind evt\n");
         }
         break;
+        case BK_HF_CLIENT_UNKNOWN_DATA_IND_EVT:
+        {
+            LOGI("unknown data received (len %d)\n", param->unknown_data.data_len);
+            const char* CGMI_IPHONE = "Apple Inc";
+            if (os_strstr(param->unknown_data.data, CGMI_IPHONE))
+            {
+                s_hfp_hf_is_iphone = 1;
+                LOGI("iphone device\r\n");
+            }
+        }
+        break;
         default:
             LOGW("Invalid HFP client event: %d\r\n", event);
             break;
@@ -597,6 +634,11 @@ void hfp_demo_cust_cmd(uint8_t *cmd)
 {
     LOGI("%s len %d\n", __func__, strlen((char *)cmd));
     bk_bt_hf_client_send_custom_cmd(hfp_profile_peer_addr, (const char *)cmd);
+}
+
+uint8_t hfp_hf_check_is_iphone(void)
+{
+    return s_hfp_hf_is_iphone;
 }
 
 void bt_audio_hf_demo_main(void *arg)
@@ -753,12 +795,20 @@ void bt_audio_hf_demo_main(void *arg)
                 }
                 break;
 
+                case BT_AUDIO_VOICE_TASK_EXIT_MSG:
+                {
+                    LOGI("BT_AUDIO_VOICE_TASK_EXIT_MSG \r\n");
+                    goto exit;
+                }
+                break;
+
                 default:
                     break;
             }
         }
     }
 
+exit:
     rtos_deinit_queue(&bt_audio_hf_demo_msg_que);
     bt_audio_hf_demo_msg_que = NULL;
     bt_audio_hf_demo_thread_handle = NULL;
@@ -808,6 +858,12 @@ int hfp_hf_demo_init(uint8_t msbc_supported)
 
     LOGI("%s\r\n", __func__);
 
+    if (s_hfp_hf_is_inited)
+    {
+        LOGE("already init");
+        return -1;
+    }
+
     bt_audio_hf_demo_task_init();
 
     ret = bk_bt_hf_client_register_callback(bk_bt_app_hfp_client_cb);
@@ -831,9 +887,33 @@ int hfp_hf_demo_init(uint8_t msbc_supported)
         return -1;
     }
 
+    s_hfp_hf_is_inited = 1;
     return ret;
 }
 
+int hfp_hf_demo_deinit(void)
+{
+    int ret = kNoErr;
+
+    LOGI("%s\r\n", __func__);
+
+    if (!s_hfp_hf_is_inited)
+    {
+        LOGE("already deinit");
+        return -1;
+    }
+
+    bk_bt_hf_client_register_callback(NULL);
+    bk_bt_hf_client_register_data_callback(NULL);
+
+    bt_audio_task_exit();
+
+    bk_bt_hf_client_deinit();
+
+    s_hfp_hf_is_inited = 0;
+
+    return ret;
+}
 
 static int mic_task_init()
 {

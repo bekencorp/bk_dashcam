@@ -17,6 +17,7 @@ typedef struct __attribute__((packed))
     uint8_t addr[6];
     uint8_t link_key[16];
     uint8_t a2dp_volume;
+    uint32_t hash;
 } bt_user_storage_elem_linkkey_t;
 
 
@@ -54,3 +55,8 @@ int32_t bluetooth_storage_save_local_key(bk_ble_local_keys_t *key);
 int32_t bluetooth_storage_clean_local_key(void);
 int32_t bluetooth_storage_read_local_key(bk_ble_local_keys_t *key);
 #endif
+int32_t bluetooth_storage_save_hash(uint8_t *addr, uint32_t hash);
+int32_t bluetooth_storage_find_addr_by_hash(uint8_t *addr, uint32_t hash);
+uint8_t bluetooth_storage_get_bond_device_num(void);
+uint32_t bluetooth_storage_get_bond_hash(uint16_t hasharray[], uint32_t arraylen );
+
