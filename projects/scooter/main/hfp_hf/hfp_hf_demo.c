@@ -83,6 +83,7 @@ enum
     HFP_STATUS_WAIT_QUERY_CALL,
     HFP_STATUS_WAIT_VGS,
     HFP_STATUS_WAIT_VGM,
+    HFP_STATUS_WAIT_CGMI,
     HFP_STATUS_WAIT_CUSTOM,
     HFP_STATUS_WAIT_QUERY_CURRENT_OP,
     HFP_STATUS_WAIT_RETRIEVE_SUB_INFO,
@@ -416,10 +417,14 @@ void bk_bt_app_hfp_client_cb(bk_hf_client_cb_event_t event, bk_hf_client_cb_para
                     break;
 
                 case HFP_STATUS_WAIT_VGM:
+                    s_hfp_status_mach = HFP_STATUS_WAIT_CGMI;
+                    const char *at_cgmi = "AT+CGMI?";
+                    hfp_demo_cust_cmd((uint8_t *)at_cgmi);
+                    break;
+
+                case HFP_STATUS_WAIT_CGMI:
                     s_hfp_status_mach = HFP_STATUS_WAIT_DONE;
                     LOGI("%s end op\n", __func__);
-                    char *at_cgmi = "AT+CGMI?";
-                    hfp_demo_cust_cmd((uint8_t*)at_cgmi);
                     break;
                 }
 
@@ -860,7 +865,7 @@ int hfp_hf_demo_init(uint8_t msbc_supported)
 
     if (s_hfp_hf_is_inited)
     {
-        LOGE("already init");
+        LOGE("already init\n");
         return -1;
     }
 

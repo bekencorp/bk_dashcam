@@ -75,7 +75,6 @@ enum
 
 static bk_gatt_if_t s_gattc_if;
 static beken_semaphore_t s_ble_sema = NULL;
-static beken_semaphore_t s_ble_data_sem = NULL;
 static beken_semaphore_t s_ble_connect_sem = NULL;
 static uint8_t s_dm_gattc_is_init;
 static uint8_t s_dm_gattc_local_addr_is_public = 0;
@@ -486,7 +485,7 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
 
 #endif
 
-        if (s_ble_data_sem)
+        if (common_env_tmp->client_sem)
         {
             app_env_tmp->write_read_status = param->status;
 
@@ -506,7 +505,7 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
                 }
             }
 
-            rtos_set_semaphore(&s_ble_data_sem);
+            rtos_set_semaphore(&common_env_tmp->client_sem);
         }
     }
     break;
@@ -553,7 +552,7 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
 
 #endif
 
-        if (s_ble_data_sem)
+        if (common_env_tmp->client_sem)
         {
             app_env_tmp->write_read_status = param->status;
 
@@ -572,7 +571,7 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
                 }
             }
 
-            rtos_set_semaphore(&s_ble_data_sem);
+            rtos_set_semaphore(&common_env_tmp->client_sem);
         }
     }
     break;
@@ -665,10 +664,10 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
 
         app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
 
-        if (s_ble_data_sem)
+        if (common_env_tmp->client_sem)
         {
             app_env_tmp->write_read_status = param->status;
-            rtos_set_semaphore(&s_ble_data_sem);
+            rtos_set_semaphore(&common_env_tmp->client_sem);
         }
     }
     break;
@@ -723,10 +722,10 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
 
 #endif
 
-        if (s_ble_data_sem)
+        if (common_env_tmp->client_sem)
         {
             app_env_tmp->write_read_status = param->status;
-            rtos_set_semaphore(&s_ble_data_sem);
+            rtos_set_semaphore(&common_env_tmp->client_sem);
         }
     }
     break;
@@ -775,9 +774,9 @@ static int32_t bk_gattc_cb (bk_gattc_cb_event_t event, bk_gatt_if_t gattc_if, bk
 
 #endif
 
-        if (s_ble_data_sem)
+        if (common_env_tmp->client_sem)
         {
-            rtos_set_semaphore(&s_ble_data_sem);
+            rtos_set_semaphore(&common_env_tmp->client_sem);
         }
     }
     break;
@@ -1335,9 +1334,9 @@ int32_t dm_gattc_write_ext(uint16_t gatt_conn_id, uint16_t attr_handle, uint8_t 
 
     app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
 
-    if (!s_ble_data_sem)
+    if (!common_env_tmp->client_sem)
     {
-        ret = rtos_init_semaphore(&s_ble_data_sem, 1);
+        ret = rtos_init_semaphore(&common_env_tmp->client_sem, 1);
 
         if (ret)
         {
@@ -1356,7 +1355,7 @@ int32_t dm_gattc_write_ext(uint16_t gatt_conn_id, uint16_t attr_handle, uint8_t 
         goto end;
     }
 
-    ret = rtos_get_semaphore(&s_ble_data_sem, SYNC_CMD_TIMEOUT_MS);
+    ret = rtos_get_semaphore(&common_env_tmp->client_sem, SYNC_CMD_TIMEOUT_MS);
 
     if (ret)
     {
@@ -1370,14 +1369,14 @@ end:;
     ret = app_env_tmp->write_read_status;
     app_env_tmp->write_read_status = 0;
 
-    if (s_ble_data_sem)
+    if (common_env_tmp->client_sem)
     {
-        if (rtos_deinit_semaphore(&s_ble_data_sem))
+        if (rtos_deinit_semaphore(&common_env_tmp->client_sem))
         {
             gatt_loge("rtos_deinit_semaphore s_ble_data_sem err %d", ret);
         }
 
-        s_ble_data_sem = NULL;
+        common_env_tmp->client_sem = NULL;
     }
 
     return ret;
@@ -1407,9 +1406,9 @@ int32_t dm_gattc_read(uint16_t gatt_conn_id, uint16_t attr_handle, uint8_t *data
 
     app_env_tmp = (typeof(app_env_tmp))common_env_tmp->data;
 
-    if (!s_ble_data_sem)
+    if (!common_env_tmp->client_sem)
     {
-        ret = rtos_init_semaphore(&s_ble_data_sem, 1);
+        ret = rtos_init_semaphore(&common_env_tmp->client_sem, 1);
 
         if (ret)
         {
@@ -1428,7 +1427,7 @@ int32_t dm_gattc_read(uint16_t gatt_conn_id, uint16_t attr_handle, uint8_t *data
         goto end;
     }
 
-    ret = rtos_get_semaphore(&s_ble_data_sem, SYNC_CMD_TIMEOUT_MS);
+    ret = rtos_get_semaphore(&common_env_tmp->client_sem, SYNC_CMD_TIMEOUT_MS);
 
     if (ret)
     {
@@ -1463,14 +1462,14 @@ end:;
         app_env_tmp->write_read_status = 0;
     }
 
-    if (s_ble_data_sem)
+    if (common_env_tmp->client_sem)
     {
-        if (rtos_deinit_semaphore(&s_ble_data_sem))
+        if (rtos_deinit_semaphore(&common_env_tmp->client_sem))
         {
             gatt_loge("rtos_deinit_semaphore s_ble_data_sem err %d", ret);
         }
 
-        s_ble_data_sem = NULL;
+        common_env_tmp->client_sem = NULL;
     }
 
     return ret;
@@ -1632,12 +1631,6 @@ int dm_gattc_deinit()
     {
         rtos_deinit_semaphore(&s_ble_sema);
         s_ble_sema = NULL;
-    }
-
-    if (s_ble_data_sem)
-    {
-        rtos_deinit_semaphore(&s_ble_data_sem);
-        s_ble_data_sem = NULL;
     }
 
     if (s_ble_connect_sem)

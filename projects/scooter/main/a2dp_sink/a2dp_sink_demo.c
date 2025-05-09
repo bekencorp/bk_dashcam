@@ -138,7 +138,7 @@ static uint8_t *p_cache_buff = NULL;
 static beken_thread_t a2dp_speaker_thread_handle = NULL;
 static beken_semaphore_t a2dp_speaker_sema = NULL;
 //static beken_timer_t a2dp_speaker_tmr = {0};
-
+static beken_semaphore_t s_a2dp_connect_sema = NULL;
 
 #endif
 static uint8_t s_a2dp_vol = DEFAULT_A2DP_VOLUME;//0~0x7f
@@ -709,6 +709,10 @@ void bk_bt_app_a2dp_sink_cb(bk_a2dp_cb_event_t event, bk_a2dp_cb_param_t *p_para
             {
                 s_audio_state = BK_A2DP_AUDIO_STATE_SUSPEND;
                 bt_audio_a2dp_sink_suspend_ind();
+            }
+            if(s_a2dp_connect_sema)
+            {
+                rtos_set_semaphore(&s_a2dp_connect_sema);
             }
         }
         else if (BK_A2DP_CONNECTION_STATE_CONNECTED == a2dp->conn_state.state)
@@ -1452,6 +1456,23 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
     }
 
     s_a2dp_sink_is_inited = 1;
+
+    LOGW("%s current bt manager status %d %d\n", __func__, bt_manager_get_connect_state(), s_bt_env.a2dp_state);
+
+    if((BT_STATE_LINK_CONNECTED == bt_manager_get_connect_state() || BT_STATE_PROFILE_CONNECTED == bt_manager_get_connect_state())
+                    && !s_bt_env.a2dp_state)
+    {
+        LOGW("%s start connect a2dp profile %02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
+                        bt_manager_get_connected_device()[5],
+                        bt_manager_get_connected_device()[4],
+                        bt_manager_get_connected_device()[3],
+                        bt_manager_get_connected_device()[2],
+                        bt_manager_get_connected_device()[1],
+                        bt_manager_get_connected_device()[0]);
+
+        bk_bt_a2dp_sink_connect(bt_manager_get_connected_device());
+    }
+
     return 0;
 }
 
@@ -1462,20 +1483,35 @@ int a2dp_sink_demo_deinit(void)
 
     if (!s_a2dp_sink_is_inited)
     {
-        LOGE("already deinit");
+        LOGE("already deinit\n");
         return -1;
     }
 
-    if (s_bt_api_event_cb_sema)
+    if(s_bt_env.a2dp_state)
     {
-        rtos_deinit_semaphore(&s_bt_api_event_cb_sema);
-        s_bt_api_event_cb_sema = NULL;
-    }
+        if (!s_a2dp_connect_sema)
+        {
+            if (rtos_init_semaphore(&s_a2dp_connect_sema, 1))
+            {
+                LOGE("%s init connect sema fail\n", __func__);
+                goto end;
+            }
+        }
 
-    if (s_bt_avrcp_event_cb_sema)
-    {
-        rtos_deinit_semaphore(&s_bt_avrcp_event_cb_sema);
-        s_bt_avrcp_event_cb_sema = NULL;
+        LOGW("%s disconnecting a2dp\n", __func__);
+        bk_bt_a2dp_sink_disconnect(bt_manager_get_connected_device());
+        LOGW("%s wait disconnect a2dp sem\n", __func__);
+
+        ret = rtos_get_semaphore(&s_a2dp_connect_sema, 5000);
+
+        if(ret)
+        {
+            LOGE("%s wait disconnect a2dp sem err %d\n", __func__, ret);
+        }
+        else
+        {
+            LOGW("%s wait disconnect a2dp success\n", __func__);
+        }
     }
 
 #if CONFIG_WIFI_COEX_SCHEME
@@ -1498,8 +1534,33 @@ int a2dp_sink_demo_deinit(void)
 
     bk_bt_a2dp_sink_deinit();
 
+    if (s_bt_api_event_cb_sema)
+    {
+        rtos_deinit_semaphore(&s_bt_api_event_cb_sema);
+        s_bt_api_event_cb_sema = NULL;
+    }
+
+    if (s_bt_avrcp_event_cb_sema)
+    {
+        rtos_deinit_semaphore(&s_bt_avrcp_event_cb_sema);
+        s_bt_avrcp_event_cb_sema = NULL;
+    }
+
     s_a2dp_sink_is_inited = 0;
 
+end:;
+
+    if (s_a2dp_connect_sema)
+    {
+        if (rtos_deinit_semaphore(&s_a2dp_connect_sema))
+        {
+            LOGE("%s deinit connect sema fail\n", __func__);
+        }
+
+        s_a2dp_connect_sema = NULL;
+    }
+
+    LOGW("%s end\n", __func__);
     return 0;
 }
 

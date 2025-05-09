@@ -174,6 +174,7 @@ static void dm_ble_gap_private_cb(bk_ble_gap_cb_event_t event, bk_ble_gap_cb_par
             {
                 return;
             }
+
 #endif
         }
     }
@@ -230,10 +231,11 @@ static int32_t dm_ble_gap_common_cb(bk_ble_gap_cb_event_t event, bk_ble_gap_cb_p
                   evt->status,
                   evt->reason,
                   evt->hci_handle
-                  );
+                 );
 
         ble_ota_start_timer();
         s_is_connect_pending = 0;
+
         dm_ble_del_app_env_by_addr(evt->remote_bda);
 
         if (evt->reason == BK_BT_STATUS_TERMINATED_MIC_FAILURE)
