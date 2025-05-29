@@ -5,3 +5,8 @@ API References
 
 api-reference
 ----------------------------------
+
+.. toctree::
+   :maxdepth: 1
+
+   Prompt Tone Development Guide <prompt_tone>
