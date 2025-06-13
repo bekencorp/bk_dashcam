@@ -2,6 +2,7 @@
 #include "components/bluetooth/bk_dm_a2dp.h"
 #include "a2dp_sink/a2dp_sink_demo.h"
 #include "hfp_hf/hfp_hf_demo.h"
+#include "bt_manager.h"
 
 static void headset_usage(void)
 {
@@ -200,7 +201,6 @@ static void cmd_headset_demo(char *pcWriteBuffer, int xWriteBufferLen, int argc,
     }
     else if (os_strcmp(argv[1], "pair_mode") == 0)
     {
-        void bk_bt_enter_pairing_mode(void);
         bk_bt_enter_pairing_mode();
     }
     else if (os_strcmp(argv[1], "set_delay_value") == 0)
@@ -311,6 +311,10 @@ static void cmd_headset_demo(char *pcWriteBuffer, int xWriteBufferLen, int argc,
         }
 
         hfp_demo_cust_cmd(cmd);
+    }
+    else if(os_strcmp(argv[1], "debug") == 0)
+    {
+        bk_bt_a2dp_sink_demo_debug_info();
     }
     else
     {

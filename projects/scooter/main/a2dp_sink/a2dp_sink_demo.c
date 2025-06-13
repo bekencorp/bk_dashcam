@@ -18,8 +18,7 @@
 #include "components/bluetooth/bk_dm_gap_bt.h"
 
 #include <driver/sbc_types.h>
-//#include <driver/aud_types.h>
-//#include <driver/aud.h>
+
 #ifdef CONFIG_A2DP_AUDIO
 #include "aud_intf.h"
 #endif
@@ -52,6 +51,7 @@
 #define LOGW(...) BK_LOGW(TAG, ##__VA_ARGS__)
 #define LOGE(...) BK_LOGE(TAG, ##__VA_ARGS__)
 #define LOGD(...) BK_LOGD(TAG, ##__VA_ARGS__)
+#define LOGV(...) BK_LOGV(TAG, ##__VA_ARGS__)
 
 #define CHECK_NULL(ptr) do {\
         if (ptr == NULL) {\
@@ -117,6 +117,17 @@ typedef struct
     beken2_timer_t avrcp_connect_tmr;
 } bt_env_s;
 
+struct bt_sbc_abnormal_debug_t
+{
+    bk_a2dp_mcc_t nego_info;
+
+    uint32_t frame_count;
+    uint32_t sample_freq;
+    uint32_t subband;
+    uint32_t block;
+    uint32_t bitpool;
+    uint32_t other;
+};
 
 static bk_a2dp_mcc_t bt_audio_a2dp_sink_codec = {0};
 
@@ -156,6 +167,10 @@ static audio_play_t *s_audio_play_obj;
 
 static uint8_t s_a2dp_sink_is_inited = 0;
 static uint8_t s_a2dp_sink_bt_manager_index = 0xff;
+static uint8_t s_auto_accept_connect_req = 1;
+
+static struct bt_sbc_abnormal_debug_t s_sbc_abnormal_debug;
+
 
 static bk_err_t bk_bt_dac_set_gain(uint8_t gain)
 {
@@ -181,7 +196,7 @@ static bk_err_t bk_bt_dac_set_gain(uint8_t gain)
     return BK_OK;
 }
 
-void avrcp_connect_timer_hdl(void *param, unsigned int ulparam)
+static void avrcp_connect_timer_hdl(void *param, unsigned int ulparam)
 {
     rtos_deinit_oneshot_timer(&s_bt_env.avrcp_connect_tmr);
     if (0 == s_bt_env.avrcp_state)
@@ -244,9 +259,11 @@ static void bt_audio_sink_task_exit(void)
     }
 }
 
-void bt_audio_sink_demo_main(void *arg)
+static void bt_audio_sink_demo_main(void *arg)
 {
     uint8_t recon_addr[6] = {0};
+    uint16_t org_frame_len = 0;
+
     if ((bluetooth_storage_get_newest_linkkey_info(recon_addr,NULL)) < 0)
     {
 		LOGI("%s can't find linkkey info\n", __func__);
@@ -274,7 +291,7 @@ void bt_audio_sink_demo_main(void *arg)
                         recon_addr[0]
                         );
 
-//        bt_manager_start_reconnect(recon_addr, 1);
+        //bt_manager_start_reconnect(recon_addr, 1);
     }
 
     while (1)
@@ -296,6 +313,9 @@ void bt_audio_sink_demo_main(void *arg)
                 bk_a2dp_mcc_t *p_codec_info = (bk_a2dp_mcc_t *)msg.data;
                 if (CODEC_AUDIO_SBC == p_codec_info->type)
                 {
+                    os_memset(&s_sbc_abnormal_debug, 0, sizeof(s_sbc_abnormal_debug));
+                    os_memcpy(&s_sbc_abnormal_debug.nego_info, p_codec_info, sizeof(*p_codec_info));
+
                     uint8_t chnl_mode = p_codec_info->cie.sbc_codec.channel_mode;
                     uint8_t chnls = p_codec_info->cie.sbc_codec.channels;
                     uint8_t subbands = p_codec_info->cie.sbc_codec.subbands;
@@ -312,6 +332,8 @@ void bt_audio_sink_demo_main(void *arg)
                         frame_length = 4 + ((4 * subbands * chnls)>>3) + ((subbands+blocks*bitpool+7)>>3);
                     }
 
+                    org_frame_len = frame_length;
+                    frame_length *= 2;
                     //get_sbc_encoder_len(p_codec_info);
 
                     LOGI("cm:%d, c:%d, s:%d, b:%d, bi:%d, frame_length:%d \n",chnl_mode, chnls, subbands,blocks, bitpool, frame_length);
@@ -379,18 +401,193 @@ void bt_audio_sink_demo_main(void *arg)
                     if (CODEC_AUDIO_SBC == bt_audio_a2dp_sink_codec.type)
                     {
                         uint8_t payload_header = *fb++;
-                        uint8_t frame_num = payload_header&0xF;
+                        uint8_t frame_num = payload_header & 0xF;
 
-                        if(msg.len - 1 != frame_length*frame_num)
+#if 1
+                        if(msg.len - 1 != org_frame_len * frame_num)
                         {
-                            //LOGI("recv undef sbc, payload_header %d, payload_len: %d, frame_num:%d %d\n", payload_header, msg.len - 1, frame_num, frame_length);
+                            uint8_t detect_frame_num = 0;
+                            uint32_t i = 0;
+
+                            LOGV("%s frame num not match, payload_header 0x%x, payload_len: %d, frame_num:%d %d %d\n", __func__, payload_header, msg.len - 1, frame_num, frame_length, org_frame_len);
+
+                            for (uint32_t i = 0; i < msg.len - 1;)
+                            {
+                                if(0x9c == fb[i])
+                                {
+                                    uint32_t tmp_sample_freq = ((fb[i + 1] >> 6) & 0x3);
+                                    uint8_t tmp_block = ((fb[i + 1] >> 4) & 0x3);
+                                    uint8_t tmp_channel = ((fb[i + 1] >> 2) & 0x3);
+                                    uint8_t tmp_channel_mode = A2DP_SBC_CHANNEL_MONO;
+                                    uint8_t tmp_alloc_method = ((fb[i + 1] >> 1) & 1);
+                                    uint8_t tmp_subbands = (fb[i + 1] & 1);
+                                    uint8_t tmp_bitpools = fb[i + 2];
+                                    uint32_t tmp_frame_len = 0;
+
+                                    switch(tmp_sample_freq)
+                                    {
+                                    case 0:
+                                        tmp_sample_freq = 16000;
+                                        break;
+                                    case 1:
+                                        tmp_sample_freq = 32000;
+                                        break;
+                                    case 2:
+                                        tmp_sample_freq = 44100;
+                                        break;
+                                    case 3:
+                                        tmp_sample_freq = 48000;
+                                        break;
+                                    }
+
+                                    switch(tmp_block)
+                                    {
+                                    case 0:
+                                        tmp_block = 4;
+                                        break;
+                                    case 1:
+                                        tmp_block = 8;
+                                        break;
+                                    case 2:
+                                        tmp_block = 12;
+                                        break;
+                                    case 3:
+                                        tmp_block = 16;
+                                        break;
+                                    }
+
+                                    switch(tmp_channel)
+                                    {
+                                    case 0:
+                                        tmp_channel = 1;
+                                        tmp_channel_mode = A2DP_SBC_CHANNEL_MONO;
+                                        break;
+                                    case 1:
+                                        tmp_channel = 2;
+                                        tmp_channel_mode = A2DP_SBC_CHANNEL_DUAL;
+                                        break;
+                                    case 2:
+                                        tmp_channel = 2;
+                                        tmp_channel_mode = A2DP_SBC_CHANNEL_STEREO;
+                                        break;
+                                    case 3:
+                                        tmp_channel = 2;
+                                        tmp_channel_mode = A2DP_SBC_CHANNEL_JOINT_STEREO;
+                                        break;
+                                    }
+
+                                    switch(tmp_alloc_method)
+                                    {
+                                    case 0:
+                                        tmp_alloc_method = 0;
+                                        break;
+                                    case 1:
+                                        tmp_alloc_method = 1;
+                                        break;
+                                    }
+
+                                    switch(tmp_subbands)
+                                    {
+                                    case 0:
+                                        tmp_subbands = 4;
+                                        break;
+                                    case 1:
+                                        tmp_subbands = 8;
+                                        break;
+                                    }
+
+                                    if(tmp_channel_mode == A2DP_SBC_CHANNEL_MONO || tmp_channel_mode == A2DP_SBC_CHANNEL_DUAL)
+                                    {
+                                        tmp_frame_len = 4 + ((4 * tmp_subbands * tmp_channel) / 8) + ((tmp_block * tmp_channel * tmp_bitpools + 7) / 8);
+                                    }
+                                    else if(tmp_channel_mode == A2DP_SBC_CHANNEL_STEREO)
+                                    {
+                                        tmp_frame_len = 4 + ((4 * tmp_subbands * tmp_channel) / 8) + ((tmp_block * tmp_bitpools + 7) / 8);
+                                    }
+                                    else //A2DP_SBC_CHANNEL_JOINT_STEREO
+                                    {
+                                        tmp_frame_len = 4 + ((4 * tmp_subbands * tmp_channel) / 8) + ((tmp_subbands + tmp_block * tmp_bitpools + 7) / 8);
+                                    }
+
+                                    if(msg.len - 1 >= i + tmp_frame_len)
+                                    {
+                                        if(tmp_sample_freq != s_sbc_abnormal_debug.nego_info.cie.sbc_codec.sample_rate)
+                                        {
+                                            s_sbc_abnormal_debug.sample_freq++;
+                                        }
+
+                                        if(tmp_block != s_sbc_abnormal_debug.nego_info.cie.sbc_codec.block_len)
+                                        {
+                                            s_sbc_abnormal_debug.block++;
+                                        }
+
+                                        if(tmp_subbands != s_sbc_abnormal_debug.nego_info.cie.sbc_codec.subbands)
+                                        {
+                                            s_sbc_abnormal_debug.subband++;
+                                        }
+
+                                        if(tmp_bitpools > s_sbc_abnormal_debug.nego_info.cie.sbc_codec.bit_pool)
+                                        {
+                                            s_sbc_abnormal_debug.bitpool++;
+                                        }
+
+                                        if(tmp_frame_len > frame_length)
+                                        {
+                                            LOGE("%s actual frame len %d > alloc len %d !!! index %d\n", __func__, tmp_frame_len, frame_length);
+                                            i += tmp_frame_len;
+                                            continue;
+                                        }
+
+                                        LOGV("%s actual frame len %d, index %d, block %d channel_mode %d subband %d bitpools %d\n", __func__,
+                                                        tmp_frame_len, detect_frame_num, tmp_block, tmp_channel_mode, tmp_subbands, tmp_bitpools);
+
+                                        if (ring_buffer_node_get_free_nodes(&s_a2dp_frame_nodes))
+                                        {
+                                            ring_buffer_node_write(&s_a2dp_frame_nodes, fb + i, tmp_frame_len);
+                                        }
+                                        else
+                                        {
+                                            LOGW("%s A2DP frame nodes buffer(sbc) is full %d index %d\n", __func__, tmp_frame_len, detect_frame_num);
+                                            goto SEND_A2DP_DATA_END;
+                                        }
+
+                                        i += tmp_frame_len;
+                                        detect_frame_num++;
+                                    }
+                                    else
+                                    {
+                                        LOGE("%s frame invalid %d index %d\n", __func__, tmp_frame_len, detect_frame_num);
+                                        s_sbc_abnormal_debug.other++;
+                                        goto SEND_A2DP_DATA_END;
+                                    }
+                                }
+                                else
+                                {
+                                    LOGE("%s index %d is not 0x9c (0x%x)!!!\n", __func__, i, fb[i]);
+                                    s_sbc_abnormal_debug.other++;
+                                    goto SEND_A2DP_DATA_END;
+                                }
+                            }
+
+                            if(detect_frame_num != frame_num)
+                            {
+                                s_sbc_abnormal_debug.frame_count++;
+                            }
+                        }
+                        else
+#else
+
+                        if(msg.len - 1 >  frame_length * frame_num)
+                        {
+                            LOGW("recv undef sbc, payload_header %d, payload_len: %d, frame_num:%d %d %d\n", payload_header, msg.len - 1, frame_num, frame_length, org_frame_len);
                         }
 
                         if((msg.len - 1) % frame_num)
                         {
-                            LOGE("%s frame len invalid\n", __func__);
+                            LOGE("frame len invalid payload_header %d, payload_len: %d, frame_num:%d %d %d\n", payload_header, msg.len - 1, frame_num, frame_length, org_frame_len);
+                            goto SEND_A2DP_DATA_END;
                         }
-
+#endif
 
                         for(uint8_t i = 0; i < frame_num; i++)
                         {
@@ -408,7 +605,6 @@ void bt_audio_sink_demo_main(void *arg)
                                 break;
                             }
                         }
-
                     }
 #if CONFIG_AAC_DECODER
                     else if(CODEC_AUDIO_AAC == bt_audio_a2dp_sink_codec.type)
@@ -466,6 +662,7 @@ void bt_audio_sink_demo_main(void *arg)
                         rtos_set_semaphore(&a2dp_speaker_sema);
                     }
                 }
+SEND_A2DP_DATA_END:;
                 psram_free(msg.data);
 #else
                 psram_free(msg.data);
@@ -474,8 +671,19 @@ void bt_audio_sink_demo_main(void *arg)
             break;
 
             case BT_AUDIO_D2DP_STOP_MSG:
+            case BT_AUDIO_EXIT_MSG:
             {
-                LOGI("BT_AUDIO_D2DP_STOP_MSG \r\n");
+                if(msg.type == BT_AUDIO_D2DP_STOP_MSG)
+                {
+                    LOGI("BT_AUDIO_D2DP_STOP_MSG\n");
+                }
+                else
+                {
+                    LOGI("BT_AUDIO_EXIT_MSG\n");
+                }
+
+                bk_bt_a2dp_sink_demo_debug_info();
+                os_memset(&s_sbc_abnormal_debug, 0, sizeof(s_sbc_abnormal_debug));
 #ifdef CONFIG_A2DP_AUDIO
 
                 if(a2dp_speaker_thread_handle)
@@ -493,6 +701,10 @@ void bt_audio_sink_demo_main(void *arg)
 
 #endif
 
+                if(msg.type == BT_AUDIO_EXIT_MSG)
+                {
+                    goto exit;
+                }
             }
             break;
 
@@ -519,13 +731,6 @@ void bt_audio_sink_demo_main(void *arg)
             }
             break;
 
-            case BT_AUDIO_EXIT_MSG:
-            {
-                LOGI("BT_AUDIO_EXIT_MSG \r\n");
-                goto exit;
-            }
-            break;
-
             default:
                 break;
             }
@@ -533,13 +738,38 @@ void bt_audio_sink_demo_main(void *arg)
     }
 
 exit:
-    rtos_deinit_queue(&bt_audio_sink_demo_msg_que);
-    bt_audio_sink_demo_msg_que = NULL;
-    bt_audio_sink_demo_thread_handle = NULL;
+//    rtos_deinit_queue(&bt_audio_sink_demo_msg_que);
+//    bt_audio_sink_demo_msg_que = NULL;
+//    bt_audio_sink_demo_thread_handle = NULL;
+
+    frame_length = 0;
+
+    ring_buffer_node_clear(&s_a2dp_frame_nodes);
+    ring_buffer_node_deinit(&s_a2dp_frame_nodes);
+
+    os_memset(&s_a2dp_frame_nodes, 0, sizeof(s_a2dp_frame_nodes));
+
+    if (p_cache_buff)
+    {
+        psram_free(p_cache_buff);
+        p_cache_buff = NULL;
+    }
+
+//    if (CODEC_AUDIO_SBC == bt_audio_a2dp_sink_codec.type)
+//    {
+//        bk_sbc_decoder_deinit();
+//    }
+//#if (CONFIG_AAC_DECODER)
+//    else if(CODEC_AUDIO_AAC == bt_audio_a2dp_sink_codec.type)
+//    {
+//        bk_aac_decoder_deinit(&bt_audio_sink_aac_decoder);
+//    }
+//#endif
+
     rtos_delete_thread(NULL);
 }
 
-int bt_audio_sink_demo_task_init(void)
+static int bt_audio_sink_demo_task_init(void)
 {
     bk_err_t ret = BK_OK;
 
@@ -579,7 +809,54 @@ int bt_audio_sink_demo_task_init(void)
     }
 }
 
-void bt_audio_sink_media_data_ind(const uint8_t *data, uint16_t data_len)
+static int bt_audio_sink_demo_task_deinit(void)
+{
+    bk_err_t ret = BK_OK;
+
+    if (bt_audio_sink_demo_thread_handle)
+    {
+        bt_audio_sink_task_exit();
+
+        LOGI("%s wait demo task end\n", __func__);
+        rtos_thread_join(&bt_audio_sink_demo_thread_handle);
+        LOGI("%s demo task end !!!\n", __func__);
+        bt_audio_sink_demo_thread_handle = NULL;
+
+        if (bt_audio_sink_demo_msg_que)
+        {
+            bk_err_t err = 0;
+            bt_audio_sink_demo_msg_t msg = {0};
+
+            while ((err = rtos_pop_from_queue(&bt_audio_sink_demo_msg_que, &msg, 0)) == 0)
+            {
+                switch (msg.type)
+                {
+                case BT_AUDIO_D2DP_DATA_IND_MSG:
+                    if (msg.data)
+                    {
+                        psram_free(msg.data);
+                        msg.data = NULL;
+                    }
+
+                    break;
+
+                default:
+                    break;
+                }
+
+                os_memset(&msg, 0, sizeof(msg));
+            }
+
+            rtos_deinit_queue(&bt_audio_sink_demo_msg_que);
+            bt_audio_sink_demo_msg_que = NULL;
+        }
+    }
+
+    (void)ret;
+    return 0;
+}
+
+static void bt_audio_sink_media_data_ind(const uint8_t *data, uint16_t data_len)
 {
     bt_audio_sink_demo_msg_t demo_msg;
     int rc = -1;
@@ -616,7 +893,7 @@ void bt_audio_sink_media_data_ind(const uint8_t *data, uint16_t data_len)
     }
 }
 
-void bt_audio_a2dp_sink_suspend_ind(void)
+static void bt_audio_a2dp_sink_suspend_ind(void)
 {
     bt_audio_sink_demo_msg_t demo_msg;
     int rc = -1;
@@ -639,7 +916,7 @@ void bt_audio_a2dp_sink_suspend_ind(void)
     }
 }
 
-void bt_audio_a2dp_sink_start_ind(bk_a2dp_mcc_t *codec)
+static void bt_audio_a2dp_sink_start_ind(bk_a2dp_mcc_t *codec)
 {
     bt_audio_sink_demo_msg_t demo_msg;
     int rc = -1;
@@ -673,7 +950,7 @@ void bt_audio_a2dp_sink_start_ind(bk_a2dp_mcc_t *codec)
 
 static bk_a2dp_audio_state_t s_audio_state = BK_A2DP_AUDIO_STATE_SUSPEND;
 
-void bk_bt_app_a2dp_sink_cb(bk_a2dp_cb_event_t event, bk_a2dp_cb_param_t *p_param)
+static void bk_bt_app_a2dp_sink_cb(bk_a2dp_cb_event_t event, bk_a2dp_cb_param_t *p_param)
 {
     LOGI("%s event: %d\r\n", __func__, event);
 
@@ -750,6 +1027,28 @@ void bk_bt_app_a2dp_sink_cb(bk_a2dp_cb_event_t event, bk_a2dp_cb_param_t *p_para
     {
         bt_audio_a2dp_sink_codec = a2dp->audio_cfg.mcc;
         LOGI("%s, codec_id %d \r\n", __func__, bt_audio_a2dp_sink_codec.type);
+    }
+    break;
+
+    case BK_A2DP_L2CAP_CONNECT_REQ_EVT:
+    {
+        struct a2dp_l2cap_connect_req_param *param = (typeof(param))p_param;
+
+        LOGI("%s BK_A2DP_L2CAP_CONNECT_REQ_EVT %02x:%02x:%02x:%02x:%02x:%02x, %s\n", __func__,
+                        param->remote_bda[5],
+                        param->remote_bda[4],
+                        param->remote_bda[3],
+                        param->remote_bda[2],
+                        param->remote_bda[1],
+                        param->remote_bda[0],
+                        s_auto_accept_connect_req ? "accept" : "reject");
+
+        param->accept = s_auto_accept_connect_req;
+
+        if(!param->accept)
+        {
+            bt_manager_set_connect_state(BT_STATE_PROFILE_CONNECTED);
+        }
     }
     break;
 
@@ -1251,7 +1550,7 @@ void bk_bt_app_avrcp_ct_vol_down(void)
     }
 }
 
-void bt_wifi_state_updated(void)
+static void bt_wifi_state_updated(void)
 {
     bt_audio_sink_demo_msg_t demo_msg;
     int rc = -1;
@@ -1275,7 +1574,7 @@ void bt_wifi_state_updated(void)
 }
 
 #if CONFIG_WIFI_COEX_SCHEME
-void wifi_state_callback(uint8_t status_id, uint8_t status_info)
+static void wifi_state_callback(uint8_t status_id, uint8_t status_info)
 {
     if (COEX_WIFI_STAT_ID_SCANNING == status_id || COEX_WIFI_STAT_ID_CONNECTING == status_id)
     {
@@ -1320,6 +1619,13 @@ static void bk_bt_a2dp_connect(uint8_t *remote_addr)
         bt_manager_set_connect_state(BT_STATE_WAIT_FOR_RECONNECT);
         return;
     }
+
+    if(!s_auto_accept_connect_req)
+    {
+        LOGW("%s no need reconnect\n", __func__);
+        return;
+    }
+
     bk_bt_a2dp_sink_connect(remote_addr);
 }
 
@@ -1337,17 +1643,25 @@ static void bk_bt_a2dp_stop_connect()
 
 static void bk_bt_a2dp_disconnect(uint8_t *remote_addr)
 {
+    LOGI("%s %02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
+                    remote_addr[5],
+                    remote_addr[4],
+                    remote_addr[3],
+                    remote_addr[2],
+                    remote_addr[1],
+                    remote_addr[0]);
+
     bk_bt_a2dp_sink_disconnect(bt_manager_get_connected_device());
 }
 
 int a2dp_sink_demo_init(uint8_t aac_supported)
 {
     int ret = 0;
-    LOGI("%s\r\n", __func__);
+    LOGI("%s\n", __func__);
 
     if (s_a2dp_sink_is_inited)
     {
-        LOGE("already init");
+        LOGE("%s already init\n", __func__);
         return -1;
     }
 
@@ -1455,23 +1769,9 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
         return -1;
     }
 
+    s_auto_accept_connect_req = 1;
+
     s_a2dp_sink_is_inited = 1;
-
-    LOGW("%s current bt manager status %d %d\n", __func__, bt_manager_get_connect_state(), s_bt_env.a2dp_state);
-
-    if((BT_STATE_LINK_CONNECTED == bt_manager_get_connect_state() || BT_STATE_PROFILE_CONNECTED == bt_manager_get_connect_state())
-                    && !s_bt_env.a2dp_state)
-    {
-        LOGW("%s start connect a2dp profile %02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
-                        bt_manager_get_connected_device()[5],
-                        bt_manager_get_connected_device()[4],
-                        bt_manager_get_connected_device()[3],
-                        bt_manager_get_connected_device()[2],
-                        bt_manager_get_connected_device()[1],
-                        bt_manager_get_connected_device()[0]);
-
-        bk_bt_a2dp_sink_connect(bt_manager_get_connected_device());
-    }
 
     return 0;
 }
@@ -1479,11 +1779,11 @@ int a2dp_sink_demo_init(uint8_t aac_supported)
 int a2dp_sink_demo_deinit(void)
 {
     int ret = 0;
-    LOGI("%s\r\n", __func__);
+    LOGI("%s\n", __func__);
 
     if (!s_a2dp_sink_is_inited)
     {
-        LOGE("already deinit\n");
+        LOGE("%s already deinit\n", __func__);
         return -1;
     }
 
@@ -1514,6 +1814,8 @@ int a2dp_sink_demo_deinit(void)
         }
     }
 
+    bt_audio_sink_demo_task_deinit();
+
 #if CONFIG_WIFI_COEX_SCHEME
     coex_bt_if_init(NULL);
 #endif
@@ -1526,7 +1828,6 @@ int a2dp_sink_demo_deinit(void)
     bk_bt_a2dp_register_callback(NULL);
     bk_bt_a2dp_sink_register_data_callback(NULL);
 
-    bt_audio_sink_task_exit();
 
     bk_bt_avrcp_ct_deinit();
 
@@ -1545,6 +1846,9 @@ int a2dp_sink_demo_deinit(void)
         rtos_deinit_semaphore(&s_bt_avrcp_event_cb_sema);
         s_bt_avrcp_event_cb_sema = NULL;
     }
+
+    bk_bt_a2dp_stop_connect();
+    os_memset(&s_bt_env, 0, sizeof(s_bt_env));
 
     s_a2dp_sink_is_inited = 0;
 
@@ -1763,27 +2067,32 @@ end:;
     LOGI("%s a2dp end!!\r\n", __func__);
     rtos_deinit_semaphore(&a2dp_speaker_sema);
     a2dp_speaker_sema = NULL;
+
     if (CODEC_AUDIO_SBC == bt_audio_a2dp_sink_codec.type)
     {
         bk_sbc_decoder_deinit();
     }
 #if (CONFIG_AAC_DECODER)
-    bk_aac_decoder_deinit(&bt_audio_sink_aac_decoder);
-#endif
-    ring_buffer_node_clear(&s_a2dp_frame_nodes);
-    ring_buffer_node_deinit(&s_a2dp_frame_nodes);
-    if (p_cache_buff)
+    else if(CODEC_AUDIO_AAC == bt_audio_a2dp_sink_codec.type)
     {
-        psram_free(p_cache_buff);
-        p_cache_buff = NULL;
+        bk_aac_decoder_deinit(&bt_audio_sink_aac_decoder);
     }
+#endif
+//    ring_buffer_node_clear(&s_a2dp_frame_nodes);
+//    ring_buffer_node_deinit(&s_a2dp_frame_nodes);
+
+//    if (p_cache_buff)
+//    {
+//        os_free(p_cache_buff);
+//        p_cache_buff = NULL;
+//    }
+
     if(s_spk_is_started)
     {
         s_spk_is_started = 0;
         LOGE("!! speaker tash exit error !!\n");
     }
     rtos_delete_thread(NULL);
-
 }
 
 int32_t wait_a2dp_speaker_task_end(void)
@@ -1794,4 +2103,124 @@ int32_t wait_a2dp_speaker_task_end(void)
     }
 
     return 0;
+}
+
+void bk_bt_a2dp_sink_demo_debug_info(void)
+{
+    uint8_t found = 0;
+
+    uint8_t *tmp = (typeof(tmp))&s_sbc_abnormal_debug;
+
+    for (uint32_t i = sizeof(s_sbc_abnormal_debug.nego_info); i < sizeof(s_sbc_abnormal_debug); ++i)
+    {
+        if(tmp[i] != 0)
+        {
+            found = 1;
+            break;
+        }
+    }
+
+    if(found)
+    {
+        LOGW("%s: found abnormal !!!\n", __func__);
+
+        LOGW("frame num err %d\n", s_sbc_abnormal_debug.frame_count);
+        LOGW("sample freq err %d\n", s_sbc_abnormal_debug.sample_freq);
+        LOGW("subband err %d\n", s_sbc_abnormal_debug.subband);
+        LOGW("block err %d\n", s_sbc_abnormal_debug.block);
+        LOGW("bitpool err %d\n", s_sbc_abnormal_debug.bitpool);
+		LOGW("other err %d\n", s_sbc_abnormal_debug.other);
+    }
+    else
+    {
+        LOGW("%s: no abnormal\n", __func__);
+    }
+}
+
+void bk_bt_a2dp_sink_demo_set_auto_accept_connect_req(uint8_t accept)
+{
+    s_auto_accept_connect_req = accept;
+}
+
+int32_t bk_bt_a2dp_sink_demo_try_connect()
+{
+    int32_t ret = 0;
+
+    if (!s_a2dp_sink_is_inited)
+    {
+        LOGE("%s already deinit\n", __func__);
+        return -1;
+    }
+
+    LOGW("%s current bt manager status %d %d\n", __func__, bt_manager_get_connect_state(), s_bt_env.a2dp_state);
+
+    if((BT_STATE_LINK_CONNECTED == bt_manager_get_connect_state() || BT_STATE_PROFILE_CONNECTED == bt_manager_get_connect_state())
+                    && !s_bt_env.a2dp_state)
+    {
+        LOGW("%s start connect a2dp profile %02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
+                        bt_manager_get_connected_device()[5],
+                        bt_manager_get_connected_device()[4],
+                        bt_manager_get_connected_device()[3],
+                        bt_manager_get_connected_device()[2],
+                        bt_manager_get_connected_device()[1],
+                        bt_manager_get_connected_device()[0]);
+
+        ret = bk_bt_a2dp_sink_connect(bt_manager_get_connected_device());
+
+        if(ret)
+        {
+            LOGE("%s bk_bt_a2dp_sink_connect err %d\n", __func__, ret);
+        }
+    }
+
+    return ret;
+}
+
+int32_t bk_bt_a2dp_sink_demo_try_disconnect_current()
+{
+    int32_t ret = 0;
+
+    if(s_bt_env.a2dp_state)
+    {
+        if (!s_a2dp_connect_sema)
+        {
+            if (rtos_init_semaphore(&s_a2dp_connect_sema, 1))
+            {
+                LOGE("%s init connect sema fail\n", __func__);
+                ret = -1;
+                goto end;
+            }
+        }
+
+        LOGW("%s disconnecting a2dp\n", __func__);
+        bk_bt_a2dp_sink_disconnect(bt_manager_get_connected_device());
+        LOGW("%s wait disconnect a2dp sem\n", __func__);
+
+        ret = rtos_get_semaphore(&s_a2dp_connect_sema, 5000);
+
+        if(ret)
+        {
+            LOGE("%s wait disconnect a2dp sem err %d\n", __func__, ret);
+        }
+        else
+        {
+            LOGW("%s wait disconnect a2dp success\n", __func__);
+        }
+    }
+
+end:;
+
+    if (s_a2dp_connect_sema)
+    {
+        if (rtos_deinit_semaphore(&s_a2dp_connect_sema))
+        {
+            LOGE("%s deinit connect sema fail\n", __func__);
+        }
+
+        s_a2dp_connect_sema = NULL;
+    }
+
+    LOGW("%s end\n", __func__);
+
+    return ret;
 }

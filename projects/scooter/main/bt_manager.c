@@ -25,6 +25,7 @@
 
 typedef struct
 {
+    uint8_t inited;
     uint8_t mode;
     uint8_t connect_state;
     uint8_t manual_enter_pairing;
@@ -61,6 +62,8 @@ void bt_stop_reconnect_timeout_check(void)
 void bk_bt_enter_pairing_mode(void)
 {
     bt_stop_reconnect_timeout_check();
+
+    LOGI("%s status %d\n", __func__, btm_env.connect_state);
 
     if (BT_STATE_RECONNECTING == btm_env.connect_state)
     {
@@ -107,6 +110,8 @@ static char *bt_manager_mode_2_str(uint8_t mode)
         return "idle-conndisable-inqdisable";
     case BT_MNG_MODE_DISCOVERABLE_ONLY:
         return "dis_only-conndisable-inqable";
+    case BT_MNG_MODE_ALL_OFF:
+        return "off-conndisable-inqdisable";
     }
     return "unknow mode";
 }
@@ -143,6 +148,9 @@ void bt_manager_set_mode(uint8_t mode)
     case BT_MNG_MODE_DISCOVERABLE_ONLY:
         bk_bt_gap_set_visibility(BK_BT_NON_CONNECTABLE, BK_BT_DISCOVERABLE);
         break;
+    case BT_MNG_MODE_ALL_OFF:
+        bk_bt_gap_set_visibility(BK_BT_NON_CONNECTABLE, BK_BT_NON_DISCOVERABLE);
+        break;
     default:
         break;
     }
@@ -152,12 +160,15 @@ void bt_manager_set_mode(uint8_t mode)
 
 void link_timeout_start_reconnect_timer_hdl(void *param, unsigned int ulparam)
 {
+    LOGI("%s\n", __func__);
+
     rtos_deinit_oneshot_timer(&btm_env.recon_tmr);
 
     for(int i=0; i<MAX_PROFILE_NUM; i++)
     {
         if(btm_cbs[i].start_connect_cb)
         {
+            LOGI("%s i %d %p\n", __func__, i, btm_cbs[i].start_connect_cb);
             btm_cbs[i].start_connect_cb(btm_env.recon_addr);
             if(btm_env.connect_state == BT_STATE_WAIT_FOR_RECONNECT)
             {
@@ -171,6 +182,7 @@ void link_timeout_start_reconnect_timer_hdl(void *param, unsigned int ulparam)
 void bt_manager_start_reconnect(uint8_t *addr, uint8_t immediate)
 {
     uint32_t time_ms = 200;
+    int32_t ret = 0;
 
     btm_env.connect_state = BT_STATE_IDLE;
 
@@ -184,8 +196,37 @@ void bt_manager_start_reconnect(uint8_t *addr, uint8_t immediate)
 
     if (!rtos_is_oneshot_timer_init(&btm_env.recon_tmr))
     {
-        rtos_init_oneshot_timer(&btm_env.recon_tmr, time_ms, (timer_2handler_t)link_timeout_start_reconnect_timer_hdl, NULL, 0);
-        rtos_start_oneshot_timer(&btm_env.recon_tmr);
+        ret = rtos_init_oneshot_timer(&btm_env.recon_tmr, time_ms, (timer_2handler_t)link_timeout_start_reconnect_timer_hdl, NULL, 0);
+
+        if(ret)
+        {
+            LOGE("%s init oneshot timer err %d\n", __func__, ret);
+            return;
+        }
+    }
+    else
+    {
+        LOGW("%s timer already init\n", __func__);
+    }
+
+    if(rtos_is_oneshot_timer_running(&btm_env.recon_tmr))
+    {
+        LOGW("%s timer already run, stop it\n", __func__);
+
+        ret = rtos_stop_oneshot_timer(&btm_env.recon_tmr);
+
+        if(ret)
+        {
+            LOGE("%s stop oneshot timer err %d\n", __func__, ret);
+        }
+    }
+
+    ret = rtos_start_oneshot_timer(&btm_env.recon_tmr);
+
+    if(ret)
+    {
+        LOGE("%s start oneshot timer err %d\n", __func__, ret);
+        return;
     }
 }
 
@@ -203,7 +244,11 @@ void gap_event_cb(bk_gap_bt_cb_event_t event, bk_bt_gap_cb_param_t *param)
         case BK_BT_GAP_ACL_DISCONN_CMPL_STAT_EVT:
         {
             uint8_t *addr = param->acl_disconn_cmpl_stat.bda;
-            LOGI("Disconnected from %x %x %x %x %x %x, reason 0x%02x \r\n", addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], param->acl_disconn_cmpl_stat.reason);
+            LOGI("Disconnected from %02x:%02x:%02x:%02x:%02x:%02x, reason 0x%02x connect_state %d\n",
+                            addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
+                            param->acl_disconn_cmpl_stat.reason,
+                            btm_env.connect_state);
+
             //bk_bt_gap_set_visibility(BK_BT_CONNECTABLE, BK_BT_DISCOVERABLE);
 
             if (btm_env.manual_enter_pairing)
@@ -412,8 +457,15 @@ void gap_event_cb(bk_gap_bt_cb_event_t event, bk_bt_gap_cb_param_t *param)
 
 int bt_manager_init()
 {
-    LOGI("%s\r\n", __func__);
+    LOGI("%s\n", __func__);
     int ret = 0;
+
+    if(btm_env.inited)
+    {
+        LOGE("%s already init\n", __func__);
+        return -1;
+    }
+
     ret = bluetooth_storage_init();
 
     if (ret)
@@ -431,10 +483,45 @@ int bt_manager_init()
     snprintf(local_name, 30, "%s_%02x%02x%02x", LOCAL_NAME, bt_mac[3], bt_mac[4], bt_mac[5]);
     bk_bt_gap_set_local_name((uint8_t *)local_name, os_strlen(local_name));
 
-    bk_bt_gap_set_visibility(BK_BT_CONNECTABLE, BK_BT_DISCOVERABLE);
+    bt_manager_set_mode(BT_MNG_MODE_PAIRING);
 
     bk_bt_gap_set_page_timeout(CONFIG_PAGE_TIMEOUT);
     bk_bt_gap_set_page_scan_activity(PAGE_SCAN_INTV, PAGE_SCAN_WIN);
+
+    uint8_t iocap = BK_BT_IO_CAP_NONE;
+
+    if(bk_bt_gap_set_security_param(BK_BT_SP_IOCAP_MODE, &iocap, sizeof(iocap)))
+    {
+        LOGE("%s set security param err\n");
+    }
+
+    rtos_delay_milliseconds(50);
+
+    btm_env.inited = 1;
+    LOGI("%s end\n", __func__);
+    return 0;
+}
+
+int bt_manager_deinit()
+{
+    LOGI("%s\n", __func__);
+
+    if(!btm_env.inited)
+    {
+        LOGE("%s already deinit\n", __func__);
+        return -1;
+    }
+
+    bk_bt_gap_register_callback(NULL);
+    bt_manager_set_mode(BT_MNG_MODE_ALL_OFF);
+
+    os_memset(&btm_cbs, 0, sizeof(btm_cbs));
+
+    bluetooth_storage_sync_to_flash();
+    bluetooth_storage_deinit();
+    os_memset(&btm_env, 0, sizeof(btm_env_s));
+
+    LOGI("%s end\n", __func__);
     return 0;
 }
 
@@ -444,14 +531,17 @@ int bt_manager_register_callback(btm_callback_s *cb)
     for(;i<MAX_PROFILE_NUM;i++)
     {
         if(
-            btm_cbs[i].gap_cb == NULL 
+            btm_cbs[i].gap_cb == NULL
             && btm_cbs[i].start_connect_cb == NULL
             && btm_cbs[i].stop_connect_cb == NULL
+            && !btm_cbs[i].start_disconnect_cb
         )
         {
+            LOGI("%s i %d %p\n", __func__, i, cb);
             btm_cbs[i].gap_cb = cb->gap_cb;
             btm_cbs[i].start_connect_cb = cb->start_connect_cb;
             btm_cbs[i].stop_connect_cb = cb->stop_connect_cb;
+            btm_cbs[i].start_disconnect_cb = cb->start_disconnect_cb;
             return i;
         }
     }
@@ -466,7 +556,7 @@ int bt_manager_unregister_callback(uint8_t index)
         LOGE("%s, wrong index %d !! \n", __func__, index);
         return -1;
     }
-
+    LOGI("%s i %d\n", __func__, index);
     os_memset(&btm_cbs[index], 0, sizeof(btm_callback_s));
     return 0;
 }

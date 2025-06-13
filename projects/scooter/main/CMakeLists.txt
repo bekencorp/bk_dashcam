@@ -35,6 +35,7 @@ endif()
 if(CONFIG_BLE)
     list(APPEND incs
         gatt
+        wifi_boarding
         ble_ota
     )
 

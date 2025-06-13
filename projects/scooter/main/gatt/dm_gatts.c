@@ -2371,6 +2371,7 @@ int32_t dm_gatts_deinit_because_bluetooth_deinit_future()
     s_char2_desc_attr_handle = INVALID_ATTR_HANDLE;
     s_char_auto_rsp_attr_handle = INVALID_ATTR_HANDLE;
     s_char4_attr_handle = INVALID_ATTR_HANDLE;
+    os_memset(s_attr_handle_list2, 0, sizeof(s_attr_handle_list2));
 #endif
     return 0;
 }

@@ -11,6 +11,7 @@ enum
     BT_MNG_MODE_CONNECTABLE,       /**< connectable and no-discoverable */
     BT_MNG_MODE_IDLE,              /**< no-connectable and no-discoverable*/
     BT_MNG_MODE_DISCOVERABLE_ONLY, /**< no-connectable and discoverable*/
+    BT_MNG_MODE_ALL_OFF,
 };
 
 enum
@@ -27,7 +28,7 @@ typedef void (*btm_gap_event_cb)(bk_gap_bt_cb_event_t event, bk_bt_gap_cb_param_
 typedef void (*btm_start_profile_connect_cb)(uint8_t *remote_addr);
 typedef void (*btm_start_profile_disconnect_cb)(uint8_t *remote_addr);
 typedef void (*btm_stop_profile_connect_cb)();
-typedef struct 
+typedef struct
 {
     btm_gap_event_cb gap_cb;
     btm_start_profile_connect_cb start_connect_cb;
@@ -41,7 +42,9 @@ void bt_manager_start_reconnect(uint8_t *addr, uint8_t immediate);
 void bt_manager_set_mode(uint8_t mode);
 uint8_t bt_manager_get_mode(void);
 int bt_manager_init();
+int bt_manager_deinit();
 uint8_t bt_manager_get_connect_state();
 void bt_manager_set_connect_state(uint8_t state);
 uint8_t* bt_manager_get_reconnect_device();
 uint8_t* bt_manager_get_connected_device();int bt_manager_unregister_callback(uint8_t index);
+void bk_bt_enter_pairing_mode(void);
