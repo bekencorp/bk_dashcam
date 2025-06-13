@@ -1666,17 +1666,19 @@ static void speaker_task(void *arg)
                         LOGE("sbc_decoder_decode error <%d> %d %d\n", ret, tmp_len, s_frame);
                         continue;
                     }
+
                     int16_t *dst = (int16_t*)bt_audio_sink_sbc_decoder.pcm_sample;
-                    int16_t w_len = bt_audio_sink_sbc_decoder.pcm_length * 4;
+                    int16_t w_len = bt_audio_sink_sbc_decoder.pcm_length * bt_audio_sink_sbc_decoder.channel_number * 2;
                     if(CONFIG_BOARD_AUDIO_CHANNLE_NUM == 1)
                     {
-                        for(int i=0; i<bt_audio_sink_sbc_decoder.pcm_length * 2; i++)
+                        if(bt_audio_a2dp_sink_codec.cie.sbc_codec.channels == 2)
                         {
-                            if (2 == cfg.nChans)
+                            for(int i = 0; i < bt_audio_sink_sbc_decoder.pcm_length * 2; i++)
                             {
-                                dst[i] = dst[i*2];
+                                dst[i] = dst[i * 2];
                             }
                         }
+
                         w_len = bt_audio_sink_sbc_decoder.pcm_length * 2;
                     }
 

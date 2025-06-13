@@ -1332,9 +1332,9 @@ int dm_ble_gap_remove_bond(uint8_t *addr)
         }
     }
 
-    const uint8_t ext_adv_inst[] = {0};
+    const uint8_t ext_adv_inst[] = {0, 1};
 
-    ret = bk_ble_gap_adv_stop(1, ext_adv_inst);
+    ret = bk_ble_gap_adv_stop(sizeof(ext_adv_inst), ext_adv_inst);
 
     if (ret)
     {
@@ -1497,9 +1497,9 @@ int32_t dm_ble_gap_clean_bond(void)
         }
     }
 
-    const uint8_t ext_adv_inst[] = {0};
+    const uint8_t ext_adv_inst[] = {0, 1};
 
-    ret = bk_ble_gap_adv_stop(1, ext_adv_inst);
+    ret = bk_ble_gap_adv_stop(sizeof(ext_adv_inst), ext_adv_inst);
 
     if (ret)
     {
